@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+: "${LOG_FILE:=/var/log/devbak.log}"
+
 # ═════════════════════════════════════════════════════════════════════
 # backup-dev.sh  —  Backup universel (DB + config serveur → rclone)
 #
@@ -13,10 +15,11 @@ set -euo pipefail
 #
 # ═══ Usage ═══════════════════════════════════════════════════════════
 #
-#   backup-dev.sh                  # run normal
+#   backup-dev.sh                  # run normal (projet courant)
+#   backup-dev.sh --all            # backup multi-projets
 #   backup-dev.sh --dry-run        # simulation
 #   backup-dev.sh --setup          # config cron + rclone (interactif)
-#   backup-dev.sh --cron-check     # vérifie l'état des crons
+#   backup-dev.sh --cron-check     # check crons + dry-run tous les projets
 #   backup-dev.sh --help           # aide + variables disponibles
 #
 # ═══ Personnalisation ═══════════════════════════════════════════════
@@ -49,6 +52,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 detect_project_dir() {
+    local dir
     for marker in "artisan" "composer.json" "package.json" "index.php" "wp-config.php" "Gemfile" "Cargo.toml" "mix.exs"; do
         [ -f "$SCRIPT_DIR/$marker" ] && { echo "$SCRIPT_DIR"; return 0; }
     done
@@ -184,6 +188,68 @@ detect_rclone_remote() {
     echo "${first:-remote}"
 }
 
+# ─── 5b. Découverte multi-projets ─────────────────────────────────
+declare -a PROJECT_ROOTS=() PROJECT_TYPES=() PROJECT_NAMES=() PROJECT_SOURCES=()
+
+register_project() {
+    local root="$1" type="$2" name="$3" source="${4:-auto}"
+    # Ignorer les répertoires système
+    case "$root" in /usr/local/*|/bin/*|/usr/bin/*|/etc/*|/sys/*|/proc/*|/dev/*) return 1 ;; esac
+    # Ignorer les doublons
+    for existing in "${PROJECT_ROOTS[@]}"; do [ "$existing" = "$root" ] && return 1; done
+    PROJECT_ROOTS+=("$root"); PROJECT_TYPES+=("$type"); PROJECT_NAMES+=("$name"); PROJECT_SOURCES+=("$source")
+}
+
+scan_docker_projects() {
+    command -v docker &>/dev/null || return 0
+    local cid mounts
+    for cid in $(docker ps -q 2>/dev/null); do
+        mounts=$(docker inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "$cid" 2>/dev/null || true)
+        [ -z "$mounts" ] && continue
+        while IFS= read -r mount; do
+            [ -z "$mount" ] && continue
+            for marker in "artisan" "composer.json" "package.json" "index.php" "wp-config.php" "Gemfile" "Cargo.toml" "mix.exs"; do
+                [ -f "$mount/$marker" ] && { register_project "$mount" "auto" "$(basename "$mount" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')" "docker"; break; }
+            done
+        done <<< "$mounts"
+    done
+}
+
+scan_global_projects() {
+    local dir
+    for dir in "/var/www" "/home" "/data"; do
+        [ ! -d "$dir" ] && continue
+        for marker in "artisan" "composer.json" "package.json" "index.php" "wp-config.php"; do
+            while IFS= read -r found; do
+                [ -n "$found" ] && register_project "$(dirname "$found")" "auto" "$(basename "$(dirname "$found")" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')" "global"
+            done < <(find "$dir" -maxdepth 3 -name "$marker" -type f 2>/dev/null | head -20)
+        done
+    done
+}
+
+load_yaml_projects() {
+    for yaml_path in "/etc/devbak.yaml" "$HOME/.config/devbak.yaml" "${PROJECT_DIR:-.}/devbak.yaml"; do
+        [ ! -f "$yaml_path" ] && continue
+        local in_projects=false
+        while IFS= read -r line; do
+            case "$line" in
+                "projects:"*) in_projects=true; continue ;;
+                " "*|$'\t'*) ;;
+                *) in_projects=false; continue ;;
+            esac
+            $in_projects || continue
+            local path="${line#*- }"; path="${path#\"}"; path="${path%\"}"; path="${path# }"
+            [ -n "$path" ] && [ -d "$path" ] && register_project "$path" "auto" "$(basename "$path" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')" "yaml"
+        done < "$yaml_path"
+    done
+}
+
+discover_projects() {
+    scan_docker_projects
+    [ ${#PROJECT_ROOTS[@]} -eq 0 ] && scan_global_projects
+    load_yaml_projects
+}
+
 # ─── 6. Variables finales ───────────────────────────────────────
 BACKUP_DIR="${BACKUP_DIR:-${PROJECT_DIR}/storage/app/backups}"
 BACKUP_DIR="${BACKUP_DIR:-${PROJECT_DIR}/backups}"
@@ -214,7 +280,7 @@ title()  { log "━━━ $* ━━━"; }
 
 cleanup() {
     local ec=$?
-    rm -rf "$WORK_DIR"
+    [ -n "${WORK_DIR:-}" ] && rm -rf "$WORK_DIR" 2>/dev/null
     [ "$ec" -ne 0 ] && [ "$ec" -ne 130 ] && [ "$ec" -ne 143 ] && fail "Backup interrompu (code $ec)"
 }
 trap cleanup EXIT
@@ -240,12 +306,21 @@ if [ "$ARG" = "--help" ] || [ "$ARG" = "-h" ]; then
     echo "╚══════════════════════════════════════════════════════════╝"
     echo ""
     echo "Usage :"
-    echo "  ./backup-dev.sh              Run normal"
-    echo "  ./backup-dev.sh --dry-run    Simulation"
-    echo "  ./backup-dev.sh --setup      Config cron + rclone (interactif)"
-    echo "  ./backup-dev.sh --cron-check Vérifie l'état des crons"
+    echo "  ./backup-dev.sh               Run normal (projet courant)"
+    echo "  ./backup-dev.sh --all         Backup de tous les projets découverts"
+    echo "  ./backup-dev.sh --dry-run     Simulation"
+    echo "  ./backup-dev.sh --setup       Config cron + rclone (interactif)"
+    echo "  ./backup-dev.sh --cron-check  Vérifie les crons + dry-run de tous les projets"
     echo ""
-    echo "Détection automatique :"
+    echo "Découverte automatique des projets :"
+    echo "  1. Conteneurs Docker (bind mounts)"
+    echo "  2. Scan global (/var/www, /home, /data)"
+    echo "  3. Fichier YAML (/etc/devbak.yaml ou ~/.config/devbak.yaml)"
+    echo "     Format :"
+    echo "       projects:"
+    echo "         - /chemin/vers/mon/projet"
+    echo ""
+    echo "Détection par projet :"
     echo "  Type projet    → laravel / wordpress / node / php / generic"
     echo "  Conteneurs     → recherche par nom (configurable)"
     echo "  Credentials DB → variables d'env du conteneur → .env local"
@@ -343,9 +418,10 @@ if [ "$ARG" = "--setup" ]; then
 fi
 
 # ═════════════════════════════════════════════════════════════════
-# MODE : --cron-check
+# MODE : --cron-check  (vérification + dry-run multi-projets)
 # ═════════════════════════════════════════════════════════════════
 if [ "$ARG" = "--cron-check" ]; then
+    # Vérification cron
     CURRENT_CRON=$(crontab -l 2>/dev/null || true)
     OLD_CRON_PATTERN="${OLD_CRON_PATTERN:-backup-fermeos-app}"
     if echo "$CURRENT_CRON" | grep -q "$OLD_CRON_PATTERN"; then
@@ -355,10 +431,39 @@ if [ "$ARG" = "--cron-check" ]; then
     fi
     if echo "$CURRENT_CRON" | grep -q "$(basename "$0")"; then
         echo "✅ Nouveau cron présent"
-        exit 0
+    else
+        echo "⚠️  Aucun cron trouvé pour $(basename "$0")"
     fi
-    echo "⚠️  Aucun cron trouvé pour $(basename "$0")"
-    exit 1
+
+    # Découverte + dry-run de chaque projet
+    discover_projects
+    count=${#PROJECT_ROOTS[@]}
+
+    if [ "$count" -eq 0 ]; then
+        # Fallback: projet local
+        if [ -d "${PROJECT_DIR:-}" ] && [ "${PROJECT_TYPE:-}" != "generic" ]; then
+            echo "✔ 1 projet trouvé (local: ${PROJECT_DIR})"
+            register_project "$PROJECT_DIR" "$PROJECT_TYPE" "$PROJECT_NAME" "local"
+            count=1
+        else
+            echo "✘ Aucun projet trouvé"
+            exit 1
+        fi
+    fi
+
+    echo "✔ ${count} projet(s) trouvé(s)"
+    ok_count=0
+    SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$SCRIPT_DIR/$(basename "$0")")
+    for i in "${!PROJECT_ROOTS[@]}"; do
+        root="${PROJECT_ROOTS[$i]}"
+        type="${PROJECT_TYPES[$i]}"
+        name="${PROJECT_NAMES[$i]}"
+        echo "── ${name} (${root}) ──"
+        BACKUP_DIR="/tmp/devbak-cron-check" \
+            bash "$SCRIPT_PATH" 2>&1 | tail -1 && ok_count=$((ok_count + 1))
+    done
+    echo "✔ Résumé : ${ok_count}/${count} OK"
+    exit 0
 fi
 
 # ═════════════════════════════════════════════════════════════════
@@ -367,8 +472,59 @@ fi
 [ "$ARG" = "--dry-run" ] && DRY_RUN=true
 
 # ═════════════════════════════════════════════════════════════════
-# MODE NORMAL — Backup
+# MODE : --all  (backup multi-projets)
 # ═════════════════════════════════════════════════════════════════
+if [ "$ARG" = "--all" ]; then
+    discover_projects
+    count=${#PROJECT_ROOTS[@]}
+
+    if [ "$count" -eq 0 ]; then
+        echo "✘ Aucun projet trouvé"
+        echo ""
+        echo "  Astuces :"
+        echo "  - Vérifie que tes conteneurs Docker sont en cours d'exécution"
+        echo "  - Crée un fichier /etc/devbak.yaml avec :"
+        echo "      projects:"
+        echo "        - /chemin/vers/mon/projet"
+        echo ""
+        exit 1
+    fi
+
+    SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$SCRIPT_DIR/$(basename "$0")")
+    ok_count=0; fail_count=0
+
+    for i in "${!PROJECT_ROOTS[@]}"; do
+        root="${PROJECT_ROOTS[$i]}"
+        type="${PROJECT_TYPES[$i]}"
+        name="${PROJECT_NAMES[$i]}"
+        src="${PROJECT_SOURCES[$i]:-auto}"
+
+        echo ""
+        echo "━━━ [${i}/${count}] ${name} (${type}) — ${root} (${src}) ━━━"
+
+        env_vars="PROJECT_DIR='${root}' PROJECT_TYPE='${type}' BACKUP_NAME_PREFIX='${name}'"
+        env_vars="${env_vars} RCLONE_PATH='${name}-backups' RCLONE_REMOTE='${RCLONE_REMOTE}'"
+        env_vars="${env_vars} BACKUP_DIR='${BACKUP_DIR}' KEEP_DAYS='${KEEP_DAYS}'"
+        [ "$RCLONE_CLEANUP" = true ] && env_vars="${env_vars} RCLONE_CLEANUP=true" || env_vars="${env_vars} RCLONE_CLEANUP=false"
+        [ "$DRY_RUN" = true ] && env_vars="${env_vars} DRY_RUN=true"
+
+        if eval "${env_vars} bash '${SCRIPT_PATH}' 2>&1"; then
+            ok_count=$((ok_count + 1))
+        else
+            fail_count=$((fail_count + 1))
+        fi
+    done
+
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║  RÉSULTATS                                                  ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    [ "$ok_count" -gt 0 ]    && echo "  ✔ ${ok_count} succès"
+    [ "$fail_count" -gt 0 ]  && echo "  ✘ ${fail_count} échecs"
+    [ "$fail_count" -eq 0 ]  && echo "  ✅ Tout OK"
+    echo ""
+    exit $fail_count
+fi
 
 title "Backup — ${PROJECT_NAME} (${PROJECT_TYPE})"
 info "Projet   : ${PROJECT_DIR}"

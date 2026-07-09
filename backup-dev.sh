@@ -306,6 +306,32 @@ confirm() {
     case "$ans" in [YyOo1]*) return 0 ;; *) return 1 ;; esac
 }
 
+# Traduit une expression cron en français clair
+# Ex: "30 2,18 * * *" → "tous les jours à 02h30 et 18h30"
+cron_human() {
+    local expr="$1" minute hour dom month dow
+    IFS=' ' read -r minute hour dom month dow <<< "$expr"
+    minute="$(printf '%s' "$minute" | sed 's/^0//')"
+    local freq=""
+    if [ "$dow" = "*" ] && [ "$dom" = "*" ]; then
+        freq="tous les jours"
+    elif [ "$dow" != "*" ]; then
+        case "$dow" in 0|7) freq="tous les dimanches" ;; 1) freq="tous les lundis" ;; 2) freq="tous les mardis" ;; 3) freq="tous les mercredis" ;; 4) freq="tous les jeudis" ;; 5) freq="tous les vendredis" ;; 6) freq="tous les samedis" ;; *) freq="tous les jours" ;; esac
+    fi
+    local times=""
+    if [[ "$hour" == *","* ]]; then
+        IFS=',' read -ra hrs <<< "$hour"
+        local parts=()
+        for h in "${hrs[@]}"; do parts+=("${h}h${minute}"); done
+        local last="${parts[-1]}"
+        unset 'parts[-1]'
+        times="${parts[*]} et ${last}"
+    else
+        times="${hour}h${minute}"
+    fi
+    echo "${freq} à ${times}"
+}
+
 signature() {
     echo ""
     echo "╔═══════════════════════════════════════════╗"
@@ -413,14 +439,14 @@ if [ "$ARG" = "--setup" ]; then
 
     if [ -n "$OLD_LINES" ] && [ "$IS_TTY" = true ]; then
         echo ""
-        echo "━━━ Ancien cron détecté ━━━"
+        echo "━━━ Ancienne sauvegarde automatique détectée ━━━"
         echo "$OLD_LINES" | while IFS= read -r line; do echo "   $line"; done
-        if confirm "👉 Supprimer cette entrée cron ?" "y"; then
+        if confirm "👉 Supprimer cette ancienne sauvegarde ?" "y"; then
             NEW_CRON=$(echo "$CURRENT_CRON" | grep -v "$OLD_CRON_PATTERN" || true)
             echo "$NEW_CRON" | crontab -
-            ok "Ancien cron supprimé"
+            ok "Ancienne sauvegarde supprimée"
         else
-            info "Ancien cron conservé"
+            info "Ancienne sauvegarde conservée"
         fi
     fi
 
@@ -428,12 +454,13 @@ if [ "$ARG" = "--setup" ]; then
     SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$SCRIPT_DIR/$(basename "$0")")
     CRON_SCHEDULE="${CRON_SCHEDULE:-30 2,18 * * *}"
     NEW_LINE="$CRON_SCHEDULE $SCRIPT_PATH >> $LOG_FILE 2>&1"
+    CRON_HUMAN=$(cron_human "$CRON_SCHEDULE")
 
     if echo "$CURRENT_CRON" | grep -qF "$SCRIPT_PATH"; then
-        info "Cron déjà présent pour $(basename "$0")"
-    elif confirm "👉 Ajouter le cron ($CRON_SCHEDULE) ?" "y"; then
+        info "Sauvegarde automatique déjà activée ($(basename "$0"))"
+    elif confirm "👉 Activer les sauvegardes automatiques ($CRON_HUMAN) ?" "y"; then
         (echo "$CURRENT_CRON"; echo "$NEW_LINE") | crontab -
-        ok "Cron ajouté : $NEW_LINE"
+        ok "Sauvegarde automatique activée !"
     fi
 
     echo ""
@@ -459,38 +486,40 @@ if [ "$ARG" = "--cron-check" ]; then
     ANY_CHANGE=false
 
     # Ancien cron
+    CRON_HUMAN=$(cron_human "$CRON_SCHEDULE")
     if echo "$CURRENT_CRON" | grep -q "$OLD_CRON_PATTERN"; then
-        warn "Ancien cron détecté :"
+        warn "Ancienne sauvegarde automatique détectée :"
         echo "$CURRENT_CRON" | grep "$OLD_CRON_PATTERN" | while IFS= read -r line; do echo "   $line"; done
-        if [ "$IS_TTY" = true ] && confirm "👉 Supprimer l'ancien cron et installer le nouveau ?" "y"; then
+        if [ "$IS_TTY" = true ] && confirm "👉 Remplacer par la nouvelle version ?" "y"; then
             CURRENT_CRON=$(echo "$CURRENT_CRON" | grep -v "$OLD_CRON_PATTERN" || true)
             (echo "$CURRENT_CRON"; echo "$NEW_LINE") | crontab -
-            ok "Ancien cron supprimé → nouveau installé"
+            ok "Sauvegarde automatique mise à jour"
             ANY_CHANGE=true
         else
-            info "Ancien cron conservé"
+            info "Version existante conservée"
         fi
     fi
 
     # Nouveau cron manquant
     if ! echo "$CURRENT_CRON" | grep -q "$(basename "$0")"; then
-        if [ "$IS_TTY" = true ] && confirm "👉 Ajouter le cron ($CRON_SCHEDULE) ?" "y"; then
+        if [ "$IS_TTY" = true ] && confirm "👉 Activer les sauvegardes automatiques ($CRON_HUMAN) ?" "y"; then
             (echo "$CURRENT_CRON"; echo "$NEW_LINE") | crontab -
-            ok "Cron ajouté : $NEW_LINE"
+            ok "Sauvegarde automatique activée !"
             ANY_CHANGE=true
         else
-            info "Pas de nouveau cron installé"
+            info "Sauvegarde non activée"
         fi
     fi
 
     # Résultat final
     CURRENT_CRON=$(crontab -l 2>/dev/null || true)
+    SCR_NAME=$(basename "$0")
     if echo "$CURRENT_CRON" | grep -q "$OLD_CRON_PATTERN"; then
-        warn "Ancien cron toujours présent"
-    elif echo "$CURRENT_CRON" | grep -q "$(basename "$0")"; then
-        ok "Cron OK : $(echo "$CURRENT_CRON" | grep "$(basename "$0")" | head -1)"
+        warn "Ancienne sauvegarde toujours présente"
+    elif echo "$CURRENT_CRON" | grep -q "$SCR_NAME"; then
+        ok "Sauvegarde automatique activée ($CRON_HUMAN)"
     else
-        warn "Aucun cron installé pour $(basename "$0")"
+        warn "Aucune sauvegarde automatique activée pour $SCR_NAME"
     fi
 
     # Découverte + dry-run de chaque projet
@@ -606,7 +635,7 @@ if [ "$IS_TTY" = false ]; then
     CURRENT_CRON=$(crontab -l 2>/dev/null || true)
     OLD_CRON_PATTERN="${OLD_CRON_PATTERN:-backup-fermeos-app}"
     if echo "$CURRENT_CRON" | grep -q "$OLD_CRON_PATTERN"; then
-        warn "Ancien cron détecté ! Exécute './$(basename "$0") --setup' pour le supprimer"
+        warn "Ancienne sauvegarde détectée ! Exécute './$(basename "$0") --cron-check' pour la mettre à jour"
     fi
 fi
 

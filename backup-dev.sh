@@ -226,7 +226,7 @@ scan_global_projects() {
         for marker in "artisan" "composer.json" "package.json" "index.php" "wp-config.php"; do
             while IFS= read -r found; do
                 [ -n "$found" ] && register_project "$(dirname "$found")" "auto" "$(basename "$(dirname "$found")" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')" "global"
-            done < <(find "$dir" -maxdepth 3 -name "$marker" -type f 2>/dev/null | head -20)
+            done < <(find "$dir" -maxdepth 3 -name "$marker" -type f 2>/dev/null | head -20 || true)
         done
     done
 }

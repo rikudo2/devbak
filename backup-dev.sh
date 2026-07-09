@@ -248,10 +248,123 @@ load_yaml_projects() {
     done
 }
 
+# ─── Sauvegarde un projet dans /etc/devbak.yaml ──────────────────
+save_project_yaml() {
+    local path="$1"
+    local yaml="/etc/devbak.yaml"
+    if [ -f "$yaml" ] && grep -qF -- "$path" "$yaml" 2>/dev/null; then
+        return 0  # déjà présent
+    fi
+    echo "projects:" | sudo tee "$yaml" >/dev/null 2>&1 || return 1
+    echo "  - $path" | sudo tee -a "$yaml" >/dev/null 2>&1 || return 1
+}
+
+# ─── Demande interactive du projet ───────────────────────────────
+ask_project() {
+    echo "━━━ Aucun projet détecté automatiquement ━━━"
+    echo ""
+
+    # 1. Détecter les conteneurs Docker
+    local containers=""
+    if command -v docker &>/dev/null; then
+        containers=$(docker ps --format '{{.Names}}' 2>/dev/null || true)
+    fi
+
+    if [ -n "$containers" ]; then
+        echo "  Conteneurs détectés :"
+        echo "$containers" | while IFS= read -r name; do echo "    • $name"; done
+        echo ""
+    fi
+
+    # 2. Types d'installation
+    echo "  Type d'installation :"
+    echo "    1) Docker    — l'application tourne dans un conteneur"
+    echo "    2) Baremetal — installation directe sur le système"
+    echo "    3) Autre     — chemin personnalisé"
+    echo ""
+    printf "  Choix [1/2/3] (défaut: 1) : "
+    read -r mode </dev/tty
+    mode="${mode:-1}"
+
+    # 3. Suggérer des chemins selon le mode
+    local suggestions=()
+    case "$mode" in
+        2|3)
+            for d in /var/www /home /opt /srv /data; do
+                [ -d "$d" ] && while IFS= read -r -d '' found; do
+                    [ -n "$found" ] && suggestions+=("$found")
+                done < <(find "$d" -maxdepth 3 \( -name "artisan" -o -name "composer.json" -o -name "package.json" -o -name "index.php" \) -type f 2>/dev/null | head -10 | tr '\n' '\0')
+            done
+            ;;
+    esac
+
+    if [ ${#suggestions[@]} -gt 0 ]; then
+        echo ""
+        echo "  Projets trouvés sur le disque :"
+        local i=1
+        for sug in "${suggestions[@]}"; do
+            local dir
+            dir=$(dirname "$sug")
+            echo "    $i) $dir"
+            i=$((i + 1))
+        done
+        echo ""
+        printf "  Choisis un numéro, ou laisse vide pour saisir manuellement : "
+        read -r choice </dev/tty
+        if [ -n "$choice" ] && [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le ${#suggestions[@]} ] 2>/dev/null; then
+            PROJECT_DIR=$(dirname "${suggestions[$((choice - 1))]}")
+        fi
+    fi
+
+    # 4. Saisie manuelle
+    if [ -z "${PROJECT_DIR:-}" ]; then
+        echo ""
+        printf "  Chemin du projet (ex: /home/mr-robot/mon-app) : "
+        read -r custom_path </dev/tty
+        PROJECT_DIR="${custom_path}"
+    fi
+
+    if [ -z "${PROJECT_DIR:-}" ] || [ ! -d "$PROJECT_DIR" ]; then
+        echo "❌ Chemin invalide : $PROJECT_DIR"
+        exit 1
+    fi
+
+    # 5. Détection du type
+    if [ -f "$PROJECT_DIR/artisan" ]; then
+        PROJECT_TYPE="laravel"
+    elif [ -f "$PROJECT_DIR/composer.json" ]; then
+        PROJECT_TYPE="php"
+    elif [ -f "$PROJECT_DIR/package.json" ]; then
+        PROJECT_TYPE="node"
+    elif [ -f "$PROJECT_DIR/wp-config.php" ]; then
+        PROJECT_TYPE="wordpress"
+    else
+        PROJECT_TYPE="generic"
+    fi
+
+    # 6. Sauvegarde dans /etc/devbak.yaml
+    echo ""
+    echo "  Projet : $PROJECT_DIR ($PROJECT_TYPE)"
+
+    if save_project_yaml "$PROJECT_DIR"; then
+        ok "Chemin sauvegardé dans /etc/devbak.yaml"
+        echo ""
+        ok "Prochain run : la détection sera automatique"
+    else
+        warn "Impossible d'écrire /etc/devbak.yaml (sudo ?)"
+    fi
+
+    register_project "$PROJECT_DIR" "manual" "$(basename "$PROJECT_DIR" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')" "manual"
+}
+
 discover_projects() {
     scan_docker_projects
     [ ${#PROJECT_ROOTS[@]} -eq 0 ] && scan_global_projects
     load_yaml_projects
+    # Si toujours rien → mode interactif
+    if [ ${#PROJECT_ROOTS[@]} -eq 0 ] && [ "$IS_TTY" = true ]; then
+        ask_project
+    fi
 }
 
 # ─── 6. Variables finales ───────────────────────────────────────
@@ -274,12 +387,23 @@ IS_TTY=false
 [ -t 0 ] && IS_TTY=true
 ARG="${1:-}"
 
-# ─── Early exit : si aucun projet trouvé ─────────────────────────
-if [ -z "${PROJECT_DIR}" ] && [ "$ARG" != "--help" ] && [ "$ARG" != "--setup" ] && [ "$ARG" != "--all" ] && [ "$ARG" != "--cron-check" ]; then
-    echo "❌ Aucun projet trouvé dans les répertoires standards."
-    echo "   Lance './$(basename "$0") --setup' pour configurer un chemin personnalisé"
-    echo "   ou définis PROJECT_DIR=/chemin/vers/ton/projet"
-    exit 1
+# ─── Si aucun projet trouvé : demander interactivement ───────────
+if [ -z "${PROJECT_DIR}" ]; then
+    if [ "$IS_TTY" = true ]; then
+        mkdir -p "$BACKUP_DIR" 2>/dev/null || true
+        discover_projects
+        if [ -n "${PROJECT_DIR:-}" ]; then
+            PROJECT_TYPE="${PROJECT_TYPE:-$(detect_project_type "$PROJECT_DIR")}"
+        else
+            echo "❌ Aucun projet défini."
+            echo "   Lance './$(basename "$0") --setup' pour configurer"
+            exit 1
+        fi
+    else
+        echo "❌ Aucun projet trouvé hors terminal."
+        echo "   Définis PROJECT_DIR=/chemin/vers/ton/projet"
+        exit 1
+    fi
 fi
 
 # ─── 7. Fonctions ───────────────────────────────────────────────
@@ -559,15 +683,24 @@ if [ "$ARG" = "--cron-check" ]; then
 fi
 
 # ═════════════════════════════════════════════════════════════════
-# MODE : --dry-run
+# MODE : --dry-run → alias de --all avec DRY_RUN=true
 # ═════════════════════════════════════════════════════════════════
-[ "$ARG" = "--dry-run" ] && DRY_RUN=true
+[ "$ARG" = "--dry-run" ] && { DRY_RUN=true; ARG="--all"; }
+
+# ─── Découverte automatique si PROJECT_DIR non défini ────────────
+if [ -z "${PROJECT_DIR}" ]; then
+    discover_projects
+    # Si un seul projet découvert, on l'utilise
+    if [ ${#PROJECT_ROOTS[@]} -eq 1 ]; then
+        PROJECT_DIR="${PROJECT_ROOTS[0]}"
+        PROJECT_TYPE="${PROJECT_TYPES[0]}"
+    fi
+fi
 
 # ═════════════════════════════════════════════════════════════════
 # MODE : --all  (backup multi-projets)
 # ═════════════════════════════════════════════════════════════════
 if [ "$ARG" = "--all" ]; then
-    discover_projects
     count=${#PROJECT_ROOTS[@]}
 
     if [ "$count" -eq 0 ]; then

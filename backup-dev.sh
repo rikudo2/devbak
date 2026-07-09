@@ -63,7 +63,7 @@ detect_project_dir() {
     done
     # Fallback : ne pas retourner de chemin système
     case "$SCRIPT_DIR" in
-        /usr/local/*|/usr/bin/*|/bin/*|/etc/*|/opt/*) echo ""; return 1 ;;
+        /usr/local/*|/usr/bin/*|/bin/*|/etc/*|/opt/*) echo ""; return 0 ;;
         *) echo "$SCRIPT_DIR"; return 0 ;;
     esac
 }
@@ -98,7 +98,7 @@ detect_container() {
         cid=$(docker ps --format '{{.ID}} {{.Image}}' | grep -i "$filter" | head -1 | awk '{print $1}')
         [ -n "$cid" ] && echo "$cid" && return 0
     fi
-    return 1
+    echo ""; return 0
 }
 
 APP_CONTAINER="" MYSQL_CONTAINER=""

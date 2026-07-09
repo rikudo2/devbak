@@ -56,12 +56,16 @@ detect_project_dir() {
     for marker in "artisan" "composer.json" "package.json" "index.php" "wp-config.php" "Gemfile" "Cargo.toml" "mix.exs"; do
         [ -f "$SCRIPT_DIR/$marker" ] && { echo "$SCRIPT_DIR"; return 0; }
     done
-    for dir in "/var/www" "/var/www/html" "$HOME/project" "$HOME/app"; do
+    for dir in "/var/www" "/var/www/html" "$HOME/project" "$HOME/app" "/data" "$HOME"; do
         for marker in "artisan" "composer.json" "package.json" "index.php"; do
             [ -f "$dir/$marker" ] && { echo "$dir"; return 0; }
         done
     done
-    echo "$SCRIPT_DIR"
+    # Fallback : ne pas retourner de chemin système
+    case "$SCRIPT_DIR" in
+        /usr/local/*|/usr/bin/*|/bin/*|/etc/*|/opt/*) echo ""; return 1 ;;
+        *) echo "$SCRIPT_DIR"; return 0 ;;
+    esac
 }
 
 detect_project_type() {
@@ -76,7 +80,7 @@ detect_project_type() {
 
 PROJECT_DIR="${PROJECT_DIR:-$(detect_project_dir)}"
 PROJECT_TYPE="${PROJECT_TYPE:-$(detect_project_type "$PROJECT_DIR")}"
-PROJECT_NAME="${BACKUP_NAME_PREFIX:-$(basename "$PROJECT_DIR" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')}"
+PROJECT_NAME="${BACKUP_NAME_PREFIX:-$(basename "${PROJECT_DIR:-generic}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')}"
 
 # ─── 2. Conteneurs Docker ────────────────────────────────────────
 DOCKER_APP_NAMES="${DOCKER_APP_NAMES:-${DOCKER_APP_NAME:-ferme-app app laravel fermeos web node app-server}}"
@@ -270,6 +274,14 @@ IS_TTY=false
 [ -t 0 ] && IS_TTY=true
 ARG="${1:-}"
 
+# ─── Early exit : si aucun projet trouvé ─────────────────────────
+if [ -z "${PROJECT_DIR}" ] && [ "$ARG" != "--help" ] && [ "$ARG" != "--setup" ] && [ "$ARG" != "--all" ] && [ "$ARG" != "--cron-check" ]; then
+    echo "❌ Aucun projet trouvé dans les répertoires standards."
+    echo "   Lance './$(basename "$0") --setup' pour configurer un chemin personnalisé"
+    echo "   ou définis PROJECT_DIR=/chemin/vers/ton/projet"
+    exit 1
+fi
+
 # ─── 7. Fonctions ───────────────────────────────────────────────
 log()    { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 info()   { log "ℹ️  $*"; }
@@ -459,8 +471,12 @@ if [ "$ARG" = "--cron-check" ]; then
         type="${PROJECT_TYPES[$i]}"
         name="${PROJECT_NAMES[$i]}"
         echo "── ${name} (${root}) ──"
-        BACKUP_DIR="/tmp/devbak-cron-check" \
-            bash "$SCRIPT_PATH" 2>&1 | tail -1 && ok_count=$((ok_count + 1))
+        env_vars="PROJECT_DIR='${root}' PROJECT_TYPE='${type}' BACKUP_NAME_PREFIX='${name}'"
+        env_vars="${env_vars} RCLONE_PATH='${name}-backups' BACKUP_DIR='/tmp/devbak-cron-check'"
+        env_vars="${env_vars} KEEP_DAYS='${KEEP_DAYS}' RCLONE_CLEANUP=true DRY_RUN=true"
+        if eval "${env_vars} bash '${SCRIPT_PATH}' 2>&1"; then
+            ok_count=$((ok_count + 1))
+        fi
     done
     echo "✔ Résumé : ${ok_count}/${count} OK"
     exit 0

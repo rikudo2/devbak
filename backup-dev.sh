@@ -306,6 +306,24 @@ confirm() {
     case "$ans" in [YyOo1]*) return 0 ;; *) return 1 ;; esac
 }
 
+signature() {
+    echo ""
+    echo "╔═══════════════════════════════════════════╗"
+    echo "║   Fs4 Backup System                       ║"
+    echo "║   Mr-Robot                                ║"
+    echo "╚═══════════════════════════════════════════╝"
+    echo ""
+}
+
+banner() {
+    local title="${1:-Backup universel}"
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║  Fs4 :: ${title}                         ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+}
+
 mkdir -p "$BACKUP_DIR"
 
 # ═════════════════════════════════════════════════════════════════
@@ -370,11 +388,7 @@ fi
 # MODE : --setup
 # ═════════════════════════════════════════════════════════════════
 if [ "$ARG" = "--setup" ]; then
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║  backup-dev.sh — Installation                           ║"
-    echo "╚══════════════════════════════════════════════════════════╝"
-    echo ""
+    banner "Installation"
 
     # 1. Résumé de la détection
     echo "━━━ Détection ━━━"
@@ -426,6 +440,7 @@ if [ "$ARG" = "--setup" ]; then
     ok "Setup terminé"
     echo "   Pour tester : $SCRIPT_PATH --dry-run"
     echo ""
+    signature
     exit 0
 fi
 
@@ -433,18 +448,49 @@ fi
 # MODE : --cron-check  (vérification + dry-run multi-projets)
 # ═════════════════════════════════════════════════════════════════
 if [ "$ARG" = "--cron-check" ]; then
+    banner "Cron Check"
+
     # Vérification cron
     CURRENT_CRON=$(crontab -l 2>/dev/null || true)
     OLD_CRON_PATTERN="${OLD_CRON_PATTERN:-backup-fermeos-app}"
+    SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$SCRIPT_DIR/$(basename "$0")")
+    CRON_SCHEDULE="${CRON_SCHEDULE:-30 2,18 * * *}"
+    NEW_LINE="$CRON_SCHEDULE $SCRIPT_PATH >> $LOG_FILE 2>&1"
+    ANY_CHANGE=false
+
+    # Ancien cron
     if echo "$CURRENT_CRON" | grep -q "$OLD_CRON_PATTERN"; then
-        echo "⚠️  Ancien cron présent :"
-        echo "$CURRENT_CRON" | grep "$OLD_CRON_PATTERN"
-        exit 1
+        warn "Ancien cron détecté :"
+        echo "$CURRENT_CRON" | grep "$OLD_CRON_PATTERN" | while IFS= read -r line; do echo "   $line"; done
+        if [ "$IS_TTY" = true ] && confirm "👉 Supprimer l'ancien cron et installer le nouveau ?" "y"; then
+            CURRENT_CRON=$(echo "$CURRENT_CRON" | grep -v "$OLD_CRON_PATTERN" || true)
+            (echo "$CURRENT_CRON"; echo "$NEW_LINE") | crontab -
+            ok "Ancien cron supprimé → nouveau installé"
+            ANY_CHANGE=true
+        else
+            info "Ancien cron conservé"
+        fi
     fi
-    if echo "$CURRENT_CRON" | grep -q "$(basename "$0")"; then
-        echo "✅ Nouveau cron présent"
+
+    # Nouveau cron manquant
+    if ! echo "$CURRENT_CRON" | grep -q "$(basename "$0")"; then
+        if [ "$IS_TTY" = true ] && confirm "👉 Ajouter le cron ($CRON_SCHEDULE) ?" "y"; then
+            (echo "$CURRENT_CRON"; echo "$NEW_LINE") | crontab -
+            ok "Cron ajouté : $NEW_LINE"
+            ANY_CHANGE=true
+        else
+            info "Pas de nouveau cron installé"
+        fi
+    fi
+
+    # Résultat final
+    CURRENT_CRON=$(crontab -l 2>/dev/null || true)
+    if echo "$CURRENT_CRON" | grep -q "$OLD_CRON_PATTERN"; then
+        warn "Ancien cron toujours présent"
+    elif echo "$CURRENT_CRON" | grep -q "$(basename "$0")"; then
+        ok "Cron OK : $(echo "$CURRENT_CRON" | grep "$(basename "$0")" | head -1)"
     else
-        echo "⚠️  Aucun cron trouvé pour $(basename "$0")"
+        warn "Aucun cron installé pour $(basename "$0")"
     fi
 
     # Découverte + dry-run de chaque projet
@@ -459,13 +505,13 @@ if [ "$ARG" = "--cron-check" ]; then
             count=1
         else
             echo "✘ Aucun projet trouvé"
+            signature
             exit 1
         fi
     fi
 
     echo "✔ ${count} projet(s) trouvé(s)"
     ok_count=0
-    SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$SCRIPT_DIR/$(basename "$0")")
     for i in "${!PROJECT_ROOTS[@]}"; do
         root="${PROJECT_ROOTS[$i]}"
         type="${PROJECT_TYPES[$i]}"
@@ -478,7 +524,10 @@ if [ "$ARG" = "--cron-check" ]; then
             ok_count=$((ok_count + 1))
         fi
     done
-    echo "✔ Résumé : ${ok_count}/${count} OK"
+    echo ""
+    ok "Résumé : ${ok_count}/${count} dry-run OK"
+    [ "$ANY_CHANGE" = true ] && info "Configuration cron modifiée — vérifie avec crontab -l"
+    signature
     exit 0
 fi
 
@@ -538,9 +587,11 @@ if [ "$ARG" = "--all" ]; then
     [ "$ok_count" -gt 0 ]    && echo "  ✔ ${ok_count} succès"
     [ "$fail_count" -gt 0 ]  && echo "  ✘ ${fail_count} échecs"
     [ "$fail_count" -eq 0 ]  && echo "  ✅ Tout OK"
-    echo ""
+    signature
     exit $fail_count
 fi
+
+banner "${PROJECT_NAME}"
 
 title "Backup — ${PROJECT_NAME} (${PROJECT_TYPE})"
 info "Projet   : ${PROJECT_DIR}"
@@ -716,3 +767,4 @@ find "$BACKUP_DIR" -maxdepth 1 -name 'backup-dev.log.*' -mtime +90 -delete 2>/de
 
 echo ""
 ok "Backup terminé — ${PROJECT_NAME}"
+signature

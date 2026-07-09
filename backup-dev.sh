@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-: "${LOG_FILE:=/var/log/devbak.log}"
+: "${LOG_FILE:=/tmp/devbak.log}"
 
 # ═════════════════════════════════════════════════════════════════════
 # backup-dev.sh  —  Backup universel (DB + config serveur → rclone)
@@ -283,7 +283,7 @@ if [ -z "${PROJECT_DIR}" ] && [ "$ARG" != "--help" ] && [ "$ARG" != "--setup" ] 
 fi
 
 # ─── 7. Fonctions ───────────────────────────────────────────────
-log()    { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
+log()    { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE" 2>/dev/null || true; }
 info()   { log "ℹ️  $*"; }
 ok()     { log "✅ $*"; }
 warn()   { log "⚠️  $*"; }

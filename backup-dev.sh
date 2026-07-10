@@ -384,7 +384,7 @@ LOG_FILE="${LOG_FILE:-$BACKUP_DIR/backup-dev.log}"
 [ ! -d "$(dirname "$LOG_FILE")" ] && LOG_FILE="/tmp/backup-dev.log"
 
 IS_TTY=false
-[ -t 0 ] && IS_TTY=true
+[ -t 1 ] && IS_TTY=true
 ARG="${1:-}"
 
 # ─── Si aucun projet trouvé : demander interactivement ───────────

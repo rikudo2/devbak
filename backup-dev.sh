@@ -282,8 +282,14 @@ ask_project() {
     echo "    2) Baremetal — installation directe sur le système"
     echo "    3) Autre     — chemin personnalisé"
     echo ""
-    printf "  Choix [1/2/3] (défaut: 1) : "
-    read -r mode </dev/tty
+    if [ "$IS_TTY" = true ]; then
+        printf "  Choix [1/2/3] (défaut: 1) : "
+        read -r mode </dev/tty
+    else
+        # Fallback non-interactif : tente /dev/tty avec timeout
+        printf "  Choix [1/2/3] (défaut: 1) : "
+        read -r -t 5 mode </dev/tty 2>/dev/null || mode=1
+    fi
     mode="${mode:-1}"
 
     # 3. Suggérer des chemins selon le mode
@@ -365,6 +371,12 @@ discover_projects() {
     if [ ${#PROJECT_ROOTS[@]} -eq 0 ] && [ "$IS_TTY" = true ]; then
         ask_project
     fi
+    # fallback ask : tenter l'interaction même sans TTY
+    if [ ${#PROJECT_ROOTS[@]} -eq 0 ]; then
+        if [ -e /dev/tty ] 2>/dev/null; then
+            ask_project
+        fi
+    fi
 }
 
 # ─── 6. Variables finales ───────────────────────────────────────
@@ -384,7 +396,13 @@ LOG_FILE="${LOG_FILE:-$BACKUP_DIR/backup-dev.log}"
 [ ! -d "$(dirname "$LOG_FILE")" ] && LOG_FILE="/tmp/backup-dev.log"
 
 IS_TTY=false
-[ -t 1 ] && IS_TTY=true
+if [ -t 2 ] 2>/dev/null; then
+    IS_TTY=true
+fi
+# Si on lit depuis /dev/tty, c'est qu'il y a un terminal
+if [ -e /dev/tty ] 2>/dev/null && command -v tty >/dev/null 2>&1 && tty -s 2>/dev/null; then
+    IS_TTY=true
+fi
 ARG="${1:-}"
 
 # ─── Si aucun projet trouvé : demander interactivement ───────────

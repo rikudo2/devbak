@@ -20,6 +20,17 @@ Licence: MIT
 - **Mode simulation** (`--dry-run`) sans action réelle
 - Configuration via **variables d'environnement**
 
+## Installation
+
+```bash
+git clone https://github.com/rikudo2/devbak.git
+cd devbak
+chmod +x backup-dev.sh
+./backup-dev.sh --setup
+```
+
+Voir [INSTALL.md](INSTALL.md) pour le guide complet (prérequis, dépendances, configuration manuelle).
+
 ## Utilisation rapide
 
 ```bash

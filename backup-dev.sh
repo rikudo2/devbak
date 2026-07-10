@@ -7,63 +7,7 @@ set -euo pipefail
 # backup-dev.sh  —  Backup universel (DB + config serveur → rclone)
 #
 # Dev: Mr-Robot (Fsociety / Fs4)
-#
-# Universel : fonctionne sur n'importe quel projet (Laravel, Node,
-# Symfony, WordPress...) et n'importe quel serveur (Docker ou non).
-# Tout est configurable via variables d'environnement. Les valeurs
-# par défaut sont pensées pour FermeOS mais s'adaptent automatiquement
-# au projet détecté.
-#
-# ═══ Sommaire (Ctrl+F pour naviguer) ═══════════════════════════════════
-#   1. Couleurs & affichage
-#   2. Détection du type de projet
-#   3. Conteneurs Docker
-#   4. Base de données (credentials)
-#   5. Fichiers de config à archiver
-#   6. Rclone (remote de destination)
-#   7. Découverte multi-projets (Docker / scan / YAML / interactif)
-#   8. Variables finales & fonctions utilitaires
-#   9. Modes : --help / --setup / --cron-check / --list / --verify /
-#              --restore / --all / --dry-run / menu interactif / run simple
-#
-# ═══ Usage ═══════════════════════════════════════════════════════════
-#
-#   backup-dev.sh                  # menu interactif (TTY) ou run normal
-#   backup-dev.sh --all            # backup multi-projets
-#   backup-dev.sh --dry-run        # simulation
-#   backup-dev.sh --setup          # config cron + rclone (interactif)
-#   backup-dev.sh --cron-check     # check crons + dry-run tous les projets
-#   backup-dev.sh --list           # liste les projets détectés (sans backup)
-#   backup-dev.sh --verify [file]  # vérifie l'intégrité d'une archive
-#   backup-dev.sh --restore <file> # extrait une archive pour inspection
-#   backup-dev.sh --help           # aide + variables disponibles
-#
-# ═══ Personnalisation ═══════════════════════════════════════════════
-#
-#   BACKUP_NAME_PREFIX="monprojet"   # préfixe des archives
-#   BACKUP_DIR="/custom/path"        # dossier de sortie
-#   KEEP_DAYS=30                     # rétention locale
-#   RCLONE_REMOTE="monremote"        # remote rclone
-#   RCLONE_PATH="monprojet-backups"  # dossier cible
-#   RCLONE_CLEANUP=true              # supprimer l'archive locale après upload
-#   DOCKER_APP_NAME="mon-app"        # nom du conteneur app
-#   DOCKER_DB_NAME="mon-db"          # nom du conteneur DB
-#   CONFIG_FILES="Dockerfile docker-compose.yaml ..."   # fichiers à archiver
-#   DB_USER="root" DB_PASSWORD="..." DB_HOST="..." DB_NAME="..." DB_PORT="3306"
-#   NO_COLOR=1                       # désactive les couleurs
-#
-# ═══ Exemples multi-serveur ═════════════════════════════════════════
-#
-#   # Serveur A : Laravel + Docker
-#   BACKUP_NAME_PREFIX="app-prod" ./backup-dev.sh
-#
-#   # Serveur B : Node.js + PostgreSQL direct
-#   BACKUP_NAME_PREFIX="api" DOCKER_MODE=false DB_TYPE=pgsql ./backup-dev.sh
-#
-#   # Serveur C : WordPress
-#   CONFIG_FILES="wp-config.php .htaccess" ./backup-dev.sh
-#
-# ═════════════════════════════════════════════════════════════════════
+# ...
 
 # ─── 1. Couleurs & affichage ─────────────────────────────────────
 _supports_color() {
@@ -239,7 +183,12 @@ scan_docker_projects() {
         while IFS= read -r mount; do
             [ -z "$mount" ] && continue
             for marker in "artisan" "composer.json" "package.json" "index.php" "wp-config.php" "Gemfile" "Cargo.toml" "mix.exs"; do
-                [ -f "$mount/$marker" ] && { register_project "$mount" "auto" "$(basename "$mount" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')" "docker"; break; }
+                if [ -f "$mount/$marker" ]; then
+                    local ptype
+                    ptype=$(detect_project_type "$mount")
+                    register_project "$mount" "$ptype" "$(basename "$mount" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')" "docker"
+                    break
+                fi
             done
         done <<< "$mounts"
     done
@@ -251,7 +200,11 @@ scan_global_projects() {
         [ ! -d "$dir" ] && continue
         for marker in "artisan" "composer.json" "package.json" "index.php" "wp-config.php"; do
             while IFS= read -r found; do
-                [ -n "$found" ] && register_project "$(dirname "$found")" "auto" "$(basename "$(dirname "$found")" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')" "global"
+                [ -n "$found" ] && {
+                    local d
+                    d=$(dirname "$found")
+                    register_project "$d" "$(detect_project_type "$d")" "$(basename "$d" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')" "global"
+                }
             done < <(find "$dir" -maxdepth 3 -name "$marker" -type f 2>/dev/null | head -20 || true)
         done
     done
@@ -269,7 +222,7 @@ load_yaml_projects() {
             esac
             $in_projects || continue
             local path="${line#*- }"; path="${path#\"}"; path="${path%\"}"; path="${path# }"
-            [ -n "$path" ] && [ -d "$path" ] && register_project "$path" "auto" "$(basename "$path" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')" "yaml"
+            [ -n "$path" ] && [ -d "$path" ] && register_project "$path" "$(detect_project_type "$path")" "$(basename "$path" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')" "yaml"
         done < "$yaml_path"
     done
 }
@@ -359,8 +312,7 @@ ask_project() {
     register_project "$PROJECT_DIR" "manual" "$(basename "$PROJECT_DIR" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')" "manual"
 }
 
-# ⚡ Correction principale : désactive set -e pendant la découverte pour éviter
-#    qu'une simple commande non essentielle n'interrompe tout le script.
+# Découverte, avec set +e pour ne pas planter
 discover_projects() {
     local allow_interactive="${1:-0}"
     set +e
@@ -659,7 +611,7 @@ run_cron_check() {
         echo "── ${name} (${root}) ──"
         env_vars="PROJECT_DIR='${root}' PROJECT_TYPE='${type}' BACKUP_NAME_PREFIX='${name}'"
         env_vars="${env_vars} RCLONE_PATH='${name}-backups' BACKUP_DIR='/tmp/devbak-cron-check'"
-        env_vars="${env_vars} KEEP_DAYS='${KEEP_DAYS}' RCLONE_CLEANUP=true DRY_RUN=true"
+        env_vars="${env_vars} KEEP_DAYS='${KEEP_DAYS}' RCLONE_CLEANUP=true DRY_RUN=true NON_INTERACTIVE=true"
         if eval "${env_vars} bash '${SCRIPT_PATH}' 2>&1"; then
             ok_count=$((ok_count + 1))
         fi
@@ -931,11 +883,15 @@ run_all() {
         src="${PROJECT_SOURCES[$i]:-auto}"
         echo ""
         echo "━━━ [$((i+1))/${count}] ${name} (${type}) — ${root} (${src}) ━━━"
+
         env_vars="PROJECT_DIR='${root}' PROJECT_TYPE='${type}' BACKUP_NAME_PREFIX='${name}'"
         env_vars="${env_vars} RCLONE_PATH='${name}-backups' RCLONE_REMOTE='${RCLONE_REMOTE}'"
         env_vars="${env_vars} BACKUP_DIR='${BACKUP_DIR}' KEEP_DAYS='${KEEP_DAYS}'"
         [ "$RCLONE_CLEANUP" = true ] && env_vars="${env_vars} RCLONE_CLEANUP=true" || env_vars="${env_vars} RCLONE_CLEANUP=false"
         [ "$DRY_RUN" = true ] && env_vars="${env_vars} DRY_RUN=true"
+        # Force le mode non interactif pour le sous-shell
+        env_vars="${env_vars} NON_INTERACTIVE=true"
+
         if eval "${env_vars} bash '${SCRIPT_PATH}' 2>&1"; then
             ok_count=$((ok_count + 1))
         else
@@ -998,6 +954,12 @@ case "$ARG" in
     --restore)      run_restore "${2:-}"; exit 0 ;;
     --dry-run)      DRY_RUN=true; ARG="--all" ;;
 esac
+
+# Si on est en mode non-interactif forcé (venant de run_all ou cron-check), exécuter directement
+if [ "${NON_INTERACTIVE:-false}" = true ]; then
+    run_single
+    exit $?
+fi
 
 if [ -z "${PROJECT_DIR}" ] || [ "$ARG" = "--all" ]; then
     discover_projects 1

@@ -66,8 +66,6 @@ set -euo pipefail
 # ═════════════════════════════════════════════════════════════════════
 
 # ─── 1. Couleurs & affichage ─────────────────────────────────────
-# Désactivées automatiquement si pas de TTY, si NO_COLOR est défini,
-# ou si le terminal ne supporte pas les couleurs (ex: cron, tee vers un log).
 _supports_color() {
     [ -n "${NO_COLOR:-}" ] && return 1
     [ -t 1 ] || return 1
@@ -97,7 +95,6 @@ detect_project_dir() {
             [ -f "$dir/$marker" ] && { echo "$dir"; return 0; }
         done
     done
-    # Fallback : ne pas retourner de chemin système
     case "$SCRIPT_DIR" in
         /usr/local/*|/usr/bin/*|/bin/*|/etc/*|/opt/*) echo ""; return 0 ;;
         *) echo "$SCRIPT_DIR"; return 0 ;;
@@ -121,7 +118,7 @@ PROJECT_NAME="${BACKUP_NAME_PREFIX:-$(basename "${PROJECT_DIR:-generic}" | tr '[
 # ─── 3. Conteneurs Docker ────────────────────────────────────────
 DOCKER_APP_NAMES="${DOCKER_APP_NAMES:-${DOCKER_APP_NAME:-ferme-app app laravel fermeos web node app-server}}"
 DOCKER_DB_NAMES="${DOCKER_DB_NAMES:-${DOCKER_DB_NAME:-mysql db mariadb postgres pgsql postgresql}}"
-DOCKER_MODE="${DOCKER_MODE:-auto}"   # auto / true / false
+DOCKER_MODE="${DOCKER_MODE:-auto}"
 
 detect_container() {
     local names="$1" filter="$2"
@@ -145,7 +142,7 @@ if [ "$DOCKER_MODE" != "false" ] && command -v docker &>/dev/null && docker info
 fi
 
 # ─── 4. DB ───────────────────────────────────────────────────────
-DB_TYPE="${DB_TYPE:-mysql}"             # mysql / pgsql / none
+DB_TYPE="${DB_TYPE:-mysql}"
 DB_USER="${DB_USER:-root}"
 DB_PASSWORD="${DB_PASSWORD:-}"
 DB_HOST="${DB_HOST:-127.0.0.1}"
@@ -154,8 +151,6 @@ DB_NAME="${DB_NAME:-}"
 
 detect_db_creds() {
     local c="$1" u="" p="" h="" d=""
-
-    # Depuis les variables d'env du conteneur (Coolify / Docker)
     if [ -n "$c" ] && [ "$DOCKER_MODE" != "false" ]; then
         case "$PROJECT_TYPE" in
             laravel)
@@ -175,8 +170,6 @@ detect_db_creds() {
                 d=$(docker exec "$c" printenv DB_NAME 2>/dev/null || true) ;;
         esac
     fi
-
-    # Fallback .env local
     if [ -z "$p" ] && [ -f "$PROJECT_DIR/.env" ]; then
         case "$PROJECT_TYPE" in
             laravel)
@@ -188,8 +181,6 @@ detect_db_creds() {
                 p=$(grep '^DB_PASSWORD=' "$PROJECT_DIR/wp-config.php" | cut -d"'" -f4 || true) ;;
         esac
     fi
-
-    # Valeurs finales : priorité aux vars d'env explicites
     echo "${u:-${DB_USER}}|${p:-${DB_PASSWORD}}|${h:-${DB_HOST}}|${d:-${DB_NAME}}"
 }
 
@@ -233,9 +224,7 @@ declare -a PROJECT_ROOTS=() PROJECT_TYPES=() PROJECT_NAMES=() PROJECT_SOURCES=()
 
 register_project() {
     local root="$1" type="$2" name="$3" source="${4:-auto}"
-    # Ignorer les répertoires système
     case "$root" in /usr/local/*|/bin/*|/usr/bin/*|/etc/*|/sys/*|/proc/*|/dev/*) return 0 ;; esac
-    # Ignorer les doublons
     for existing in "${PROJECT_ROOTS[@]}"; do [ "$existing" = "$root" ] && return 0; done
     PROJECT_ROOTS+=("$root"); PROJECT_TYPES+=("$type"); PROJECT_NAMES+=("$name"); PROJECT_SOURCES+=("$source")
 }
@@ -285,35 +274,28 @@ load_yaml_projects() {
     done
 }
 
-# ─── Sauvegarde un projet dans /etc/devbak.yaml ──────────────────
 save_project_yaml() {
     local path="$1"
     local yaml="/etc/devbak.yaml"
     if [ -f "$yaml" ] && grep -qF -- "$path" "$yaml" 2>/dev/null; then
-        return 0  # déjà présent
+        return 0
     fi
     echo "projects:" | sudo tee "$yaml" >/dev/null 2>&1 || return 1
     echo "  - $path" | sudo tee -a "$yaml" >/dev/null 2>&1 || return 1
 }
 
-# ─── Demande interactive du projet ───────────────────────────────
 ask_project() {
     echo "${C_CYAN}━━━ Aucun projet détecté automatiquement ━━━${C_RESET}"
     echo ""
-
-    # 1. Détecter les conteneurs Docker
     local containers=""
     if command -v docker &>/dev/null; then
         containers=$(docker ps --format '{{.Names}}' 2>/dev/null || true)
     fi
-
     if [ -n "$containers" ]; then
         echo "  Conteneurs détectés :"
         echo "$containers" | while IFS= read -r name; do echo "    • $name"; done
         echo ""
     fi
-
-    # 2. Types d'installation
     echo "  Type d'installation :"
     echo "    1) Docker    — l'application tourne dans un conteneur"
     echo "    2) Baremetal — installation directe sur le système"
@@ -323,13 +305,10 @@ ask_project() {
         printf "  Choix [1/2/3] (défaut: 1) : "
         read -r mode </dev/tty
     else
-        # Fallback non-interactif : tente /dev/tty avec timeout
         printf "  Choix [1/2/3] (défaut: 1) : "
         read -r -t 5 mode </dev/tty 2>/dev/null || mode=1
     fi
     mode="${mode:-1}"
-
-    # 3. Suggérer des chemins selon le mode
     local suggestions=()
     case "$mode" in
         2|3)
@@ -340,7 +319,6 @@ ask_project() {
             done
             ;;
     esac
-
     if [ ${#suggestions[@]} -gt 0 ]; then
         echo ""
         echo "  Projets trouvés sur le disque :"
@@ -358,27 +336,19 @@ ask_project() {
             PROJECT_DIR=$(dirname "${suggestions[$((choice - 1))]}")
         fi
     fi
-
-    # 4. Saisie manuelle
     if [ -z "${PROJECT_DIR:-}" ]; then
         echo ""
         printf "  Chemin du projet (ex: /home/mr-robot/mon-app) : "
         read -r custom_path </dev/tty
         PROJECT_DIR="${custom_path}"
     fi
-
     if [ -z "${PROJECT_DIR:-}" ] || [ ! -d "$PROJECT_DIR" ]; then
         echo "${C_RED}❌ Chemin invalide : $PROJECT_DIR${C_RESET}"
         exit 1
     fi
-
-    # 5. Détection du type
     PROJECT_TYPE="$(detect_project_type "$PROJECT_DIR")"
-
-    # 6. Sauvegarde dans /etc/devbak.yaml
     echo ""
     echo "  Projet : $PROJECT_DIR ($PROJECT_TYPE)"
-
     if save_project_yaml "$PROJECT_DIR"; then
         ok "Chemin sauvegardé dans /etc/devbak.yaml"
         echo ""
@@ -386,28 +356,24 @@ ask_project() {
     else
         warn "Impossible d'écrire /etc/devbak.yaml (sudo ?)"
     fi
-
     register_project "$PROJECT_DIR" "manual" "$(basename "$PROJECT_DIR" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')" "manual"
 }
 
-# Découvre tous les projets disponibles (Docker, scan disque, YAML).
-# N'ouvre le mode interactif ask_project() QUE si demandé explicitement
-# (paramètre "1") et qu'un TTY est disponible — cette fonction seule
-# est donc sûre à appeler depuis un cron sans jamais bloquer le script.
+# ⚡ Correction principale : désactive set -e pendant la découverte pour éviter
+#    qu'une simple commande non essentielle n'interrompe tout le script.
 discover_projects() {
     local allow_interactive="${1:-0}"
+    set +e
     scan_docker_projects
     [ ${#PROJECT_ROOTS[@]} -eq 0 ] && scan_global_projects
     load_yaml_projects
     if [ ${#PROJECT_ROOTS[@]} -eq 0 ] && [ "$allow_interactive" = "1" ] && [ "$IS_TTY" = true ]; then
         ask_project
     fi
+    set -e
 }
 
 # ─── 8. Variables finales ───────────────────────────────────────
-
-# Chaîne de fallback réelle pour BACKUP_DIR : on teste chaque candidat
-# et on prend le premier dossier utilisable (existant ou créable).
 resolve_backup_dir() {
     local candidates=(
         "${BACKUP_DIR:-}"
@@ -441,7 +407,6 @@ IS_TTY=false
 if [ -t 2 ] 2>/dev/null; then
     IS_TTY=true
 fi
-# Si on lit depuis /dev/tty, c'est qu'il y a un terminal
 if [ -e /dev/tty ] 2>/dev/null && command -v tty >/dev/null 2>&1 && tty -s 2>/dev/null; then
     IS_TTY=true
 fi
@@ -472,8 +437,6 @@ confirm() {
     case "$ans" in [YyOo1]*) return 0 ;; *) return 1 ;; esac
 }
 
-# Traduit une expression cron en français concis
-# Ex: "30 2,18 * * *" → "quotidien 02h30, 18h30"
 cron_human() {
     local expr="$1" minute hour dom month dow
     IFS=' ' read -r minute hour dom month dow <<< "$expr"
@@ -505,7 +468,6 @@ signature() {
     echo ""
 }
 
-# Boîte ASCII qui s'adapte à la longueur du titre (évite les bordures cassées)
 banner() {
     local title="${1:-Backup universel}" prefix="Fs4 :: "
     local text="${prefix}${title}"
@@ -520,7 +482,6 @@ banner() {
     echo ""
 }
 
-# Liste lisible des projets actuellement dans PROJECT_ROOTS
 print_project_table() {
     local i
     printf "  %-3s %-22s %-10s %-8s %s\n" "#" "NOM" "TYPE" "SOURCE" "CHEMIN"
@@ -533,7 +494,7 @@ print_project_table() {
 mkdir -p "$BACKUP_DIR"
 
 # ═════════════════════════════════════════════════════════════════
-# MODE : --help
+# MODES
 # ═════════════════════════════════════════════════════════════════
 run_help() {
     banner "Aide"
@@ -589,18 +550,13 @@ run_help() {
     echo ""
 }
 
-# ═════════════════════════════════════════════════════════════════
-# MODE : --setup
-# ═════════════════════════════════════════════════════════════════
 run_setup() {
     banner "Installation"
-
     echo "━━━ Détection ━━━"
     echo "  Projet :   ${PROJECT_DIR}  (${PROJECT_TYPE})"
     echo "  Conteneur app : ${APP_CONTAINER:-non trouvé}"
     echo "  Conteneur DB  : ${MYSQL_CONTAINER:-non trouvé}"
     echo ""
-
     if command -v rclone &>/dev/null; then
         REMOTES=$(rclone listremotes 2>/dev/null | tr -d ':')
         [ -n "$REMOTES" ] && ok "rclone : $(echo "$REMOTES" | tr '\n' ' ')" \
@@ -608,11 +564,9 @@ run_setup() {
     else
         warn "rclone non installé (sudo apt install rclone && rclone config)"
     fi
-
     CURRENT_CRON=$(crontab -l 2>/dev/null || true)
     OLD_CRON_PATTERN="${OLD_CRON_PATTERN:-backup-fermeos-app}"
     OLD_LINES=$(echo "$CURRENT_CRON" | grep "$OLD_CRON_PATTERN" || true)
-
     if [ -n "$OLD_LINES" ] && [ "$IS_TTY" = true ]; then
         echo ""
         echo "━━━ Ancienne config cron détectée ━━━"
@@ -625,19 +579,16 @@ run_setup() {
             info "Ancienne config conservée"
         fi
     fi
-
     SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$SCRIPT_DIR/$(basename "$0")")
     CRON_SCHEDULE="${CRON_SCHEDULE:-30 2,18 * * *}"
     NEW_LINE="$CRON_SCHEDULE $SCRIPT_PATH >> $LOG_FILE 2>&1"
     CRON_HUMAN=$(cron_human "$CRON_SCHEDULE")
-
     if echo "$CURRENT_CRON" | grep -qF "$SCRIPT_PATH"; then
         info "Config cron déjà active ($(basename "$0"))"
     elif confirm "👉 Installer la config cron ($CRON_HUMAN) ?" "y"; then
         (echo "$CURRENT_CRON"; echo "$NEW_LINE") | crontab -
         ok "Config cron installée"
     fi
-
     echo ""
     ok "Setup terminé"
     echo "   Pour tester : $SCRIPT_PATH --dry-run"
@@ -645,19 +596,14 @@ run_setup() {
     signature
 }
 
-# ═════════════════════════════════════════════════════════════════
-# MODE : --cron-check  (vérification + dry-run multi-projets)
-# ═════════════════════════════════════════════════════════════════
 run_cron_check() {
     banner "Cron Check"
-
     CURRENT_CRON=$(crontab -l 2>/dev/null || true)
     OLD_CRON_PATTERN="${OLD_CRON_PATTERN:-backup-fermeos-app}"
     SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$SCRIPT_DIR/$(basename "$0")")
     CRON_SCHEDULE="${CRON_SCHEDULE:-30 2,18 * * *}"
     NEW_LINE="$CRON_SCHEDULE $SCRIPT_PATH >> $LOG_FILE 2>&1"
     ANY_CHANGE=false
-
     CRON_HUMAN=$(cron_human "$CRON_SCHEDULE")
     if echo "$CURRENT_CRON" | grep -q "$OLD_CRON_PATTERN"; then
         warn "Ancienne config cron détectée :"
@@ -671,7 +617,6 @@ run_cron_check() {
             info "Config existante conservée"
         fi
     fi
-
     if ! echo "$CURRENT_CRON" | grep -q "$(basename "$0")"; then
         if [ "$IS_TTY" = true ] && confirm "👉 Installer la config cron ($CRON_HUMAN) ?" "y"; then
             (echo "$CURRENT_CRON"; echo "$NEW_LINE") | crontab -
@@ -681,7 +626,6 @@ run_cron_check() {
             info "Config non installée"
         fi
     fi
-
     CURRENT_CRON=$(crontab -l 2>/dev/null || true)
     SCR_NAME=$(basename "$0")
     if echo "$CURRENT_CRON" | grep -q "$OLD_CRON_PATTERN"; then
@@ -691,10 +635,8 @@ run_cron_check() {
     else
         warn "Aucune config cron active pour $SCR_NAME"
     fi
-
     discover_projects 0
     count=${#PROJECT_ROOTS[@]}
-
     if [ "$count" -eq 0 ]; then
         if [ -d "${PROJECT_DIR:-}" ] && [ "${PROJECT_TYPE:-}" != "generic" ]; then
             echo "✔ 1 projet trouvé (local: ${PROJECT_DIR})"
@@ -706,7 +648,6 @@ run_cron_check() {
             exit 1
         fi
     fi
-
     echo "✔ ${count} projet(s) trouvé(s)"
     print_project_table
     echo ""
@@ -729,9 +670,6 @@ run_cron_check() {
     signature
 }
 
-# ═════════════════════════════════════════════════════════════════
-# MODE : --list  (liste les projets détectés, sans rien backuper)
-# ═════════════════════════════════════════════════════════════════
 run_list() {
     banner "Projets détectés"
     discover_projects 0
@@ -749,28 +687,21 @@ run_list() {
     signature
 }
 
-# ═════════════════════════════════════════════════════════════════
-# MODE : --verify [fichier]  (vérifie l'intégrité d'une archive tar.gz)
-# ═════════════════════════════════════════════════════════════════
 run_verify() {
     local target="${1:-}"
     banner "Vérification d'archive"
-
     if [ -z "$target" ]; then
         target=$(find "$BACKUP_DIR" -maxdepth 1 -name '*-backup-dev-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
         [ -z "$target" ] && { fail "Aucune archive trouvée dans ${BACKUP_DIR}"; signature; exit 1; }
         info "Aucun fichier précisé → dernière archive : $(basename "$target")"
     fi
-
     if [ ! -f "$target" ]; then
         fail "Fichier introuvable : $target"
         signature
         exit 1
     fi
-
     info "Fichier   : $target"
     info "Taille    : $(stat -c%s "$target" 2>/dev/null || stat -f%z "$target" 2>/dev/null || echo '?') octets"
-
     if tar -tzf "$target" &>/dev/null; then
         ok "Archive valide (tar.gz lisible)"
         echo ""
@@ -784,39 +715,30 @@ run_verify() {
     signature
 }
 
-# ═════════════════════════════════════════════════════════════════
-# MODE : --restore <fichier>  (extraction dans un dossier d'inspection,
-#                              ne touche JAMAIS au projet en place)
-# ═════════════════════════════════════════════════════════════════
 run_restore() {
     local target="${1:-}"
     banner "Restauration (inspection)"
-
     if [ -z "$target" ] || [ ! -f "$target" ]; then
         fail "Utilisation : --restore /chemin/vers/archive.tar.gz"
         signature
         exit 1
     fi
-
     if ! tar -tzf "$target" &>/dev/null; then
         fail "Archive invalide, restauration annulée : $target"
         signature
         exit 1
     fi
-
     local dest="${RESTORE_DIR:-${BACKUP_DIR}/restore-$(date +%Y%m%d_%H%M%S)}"
     info "Archive   : $target"
     info "Extraction vers : $dest"
     echo ""
     warn "Ceci extrait uniquement l'archive dans un dossier séparé pour inspection."
     warn "Rien n'est réappliqué automatiquement à ta base de données ou à ton projet."
-
     if [ "$IS_TTY" = true ] && ! confirm "👉 Continuer l'extraction ?" "y"; then
         info "Annulé."
         signature
         return 0
     fi
-
     mkdir -p "$dest"
     tar -xzf "$target" -C "$dest"
     ok "Extraction terminée : $dest"
@@ -826,12 +748,8 @@ run_restore() {
     signature
 }
 
-# ═════════════════════════════════════════════════════════════════
-# MODE : run_single  (backup d'un seul projet — logique principale)
-# ═════════════════════════════════════════════════════════════════
 run_single() {
     banner "${PROJECT_NAME}"
-
     title "Backup — ${PROJECT_NAME} (${PROJECT_TYPE})"
     info "Projet   : ${PROJECT_DIR}"
     info "DB       : ${DB_TYPE}"
@@ -840,7 +758,6 @@ run_single() {
     info "Rclone   : ${RCLONE_REMOTE}:${RCLONE_PATH}"
     [ "$DRY_RUN" = true ] && warn "Mode DRY-RUN : aucune action réelle"
 
-    # ─── Vérification cron (une fois par jour) ──────────────────
     if [ "$IS_TTY" = false ]; then
         CURRENT_CRON=$(crontab -l 2>/dev/null || true)
         OLD_CRON_PATTERN="${OLD_CRON_PATTERN:-backup-fermeos-app}"
@@ -849,13 +766,11 @@ run_single() {
         fi
     fi
 
-    # ─── DB Dump ─────────────────────────────────────────────────
     step 1 4 "Base de données"
     if [ "$DB_TYPE" != "none" ] && [ -n "$MYSQL_CONTAINER" ]; then
         IFS='|' read -r DB_U DB_P DB_H DB_D <<< "$(detect_db_creds "$MYSQL_CONTAINER")"
         DB_U="${DB_U:-$DB_USER}"  DB_P="${DB_P:-$DB_PASSWORD}"
         DB_H="${DB_H:-$DB_HOST}"  DB_D="${DB_D:-$DB_NAME}"
-
         if [ "$DRY_RUN" = false ]; then
             if [ "$DB_TYPE" = "mysql" ]; then
                 MYSQL_PWD="${DB_P}" docker exec "$MYSQL_CONTAINER" mysqldump \
@@ -873,15 +788,12 @@ run_single() {
                     "$DB_D" > "$WORK_DIR/db.sql" 2>/dev/null || true
             fi
         fi
-
         [ -s "$WORK_DIR/db.sql" ] && ok "Dump : $(wc -c < "$WORK_DIR/db.sql") octets" \
                                   || warn "Dump vide ou échoué"
-
     elif [ "$DB_TYPE" != "none" ] && [ "$DOCKER_MODE" != "false" ]; then
         IFS='|' read -r DB_U DB_P DB_H DB_D <<< "$(detect_db_creds "")"
         DB_U="${DB_U:-$DB_USER}"  DB_P="${DB_P:-$DB_PASSWORD}"
         DB_H="${DB_H:-$DB_HOST}"  DB_D="${DB_D:-$DB_NAME}"
-
         if [ "$DRY_RUN" = false ] && command -v "${DB_TYPE}dump" &>/dev/null; then
             if [ "$DB_TYPE" = "mysql" ]; then
                 MYSQL_PWD="$DB_P" mysqldump -u "$DB_U" -h "$DB_H" -P "${DB_PORT:-3306}" \
@@ -896,17 +808,13 @@ run_single() {
         info "DB_TYPE=none ou aucun conteneur, dump ignoré"
     fi
 
-    # ─── Config serveur ──────────────────────────────────────────
     step 2 4 "Configuration serveur"
-
     FOUND_FILES=""
     TARGET_DIR=""
-
     for f in $CONFIG_FILES; do
         [ -f "$PROJECT_DIR/$f" ] && FOUND_FILES="$FOUND_FILES $f"
     done
     [ -n "$FOUND_FILES" ] && TARGET_DIR="$PROJECT_DIR" && info "Fichiers trouvés dans ${PROJECT_DIR}"
-
     if [ -z "$FOUND_FILES" ] && [ -n "$APP_CONTAINER" ]; then
         info "Fallback : extraction depuis ${APP_CONTAINER}..."
         mkdir -p "$WORK_DIR/config-app"
@@ -916,7 +824,6 @@ run_single() {
         done
         [ -n "$FOUND_FILES" ] && TARGET_DIR="$WORK_DIR/config-app/app"
     fi
-
     if [ -n "$FOUND_FILES" ] && [ -n "$TARGET_DIR" ]; then
         if [ "$DRY_RUN" = false ]; then
             tar -czf "$WORK_DIR/config.tar.gz" -C "$TARGET_DIR" $FOUND_FILES 2>/dev/null || warn "Erreur création archive config"
@@ -926,7 +833,6 @@ run_single() {
         warn "Aucun fichier de config trouvé"
     fi
 
-    # ─── Informations système ────────────────────────────────────
     step 3 4 "Informations système"
     if [ "$DRY_RUN" = false ]; then
         PHP_V="php -v"
@@ -957,12 +863,10 @@ run_single() {
     fi
     ok "system-info.txt créé"
 
-    # ─── Assemblage ──────────────────────────────────────────────
     step 4 4 "Assemblage & upload"
     if [ "$DRY_RUN" = false ]; then
         tar -czf "$BACKUP_DIR/${BASENAME}.tar.gz" -C "$WORK_DIR" . 2>/dev/null
     fi
-
     if [ -f "$BACKUP_DIR/${BASENAME}.tar.gz" ]; then
         S=$(stat -c%s "$BACKUP_DIR/${BASENAME}.tar.gz" 2>/dev/null || stat -f%z "$BACKUP_DIR/${BASENAME}.tar.gz" 2>/dev/null || echo "?")
         ok "Archive : ${BASENAME}.tar.gz (${S} octets)"
@@ -970,7 +874,6 @@ run_single() {
         [ "$DRY_RUN" = false ] && warn "Archive non créée"
     fi
 
-    # ─── Upload rclone ───────────────────────────────────────────
     title "Upload"
     if command -v rclone &>/dev/null && [ -f "$BACKUP_DIR/${BASENAME}.tar.gz" ]; then
         info "rclone ${RCLONE_REMOTE}:${RCLONE_PATH}/"
@@ -989,7 +892,6 @@ run_single() {
         [ "$DRY_RUN" = false ] && warn "Archive introuvable"
     fi
 
-    # ─── Rotation ────────────────────────────────────────────────
     title "Rotation"
     if [ "$KEEP_DAYS" -gt 0 ]; then
         info "Nettoyage des backups > ${KEEP_DAYS} jours..."
@@ -1004,12 +906,8 @@ run_single() {
     signature
 }
 
-# ═════════════════════════════════════════════════════════════════
-# MODE : run_all  (backup multi-projets)
-# ═════════════════════════════════════════════════════════════════
 run_all() {
     local count=${#PROJECT_ROOTS[@]}
-
     if [ "$count" -eq 0 ]; then
         fail "Aucun projet trouvé"
         echo ""
@@ -1021,36 +919,29 @@ run_all() {
         echo ""
         exit 1
     fi
-
     banner "Backup multi-projets (${count})"
     print_project_table
     echo ""
-
     local SCRIPT_PATH ok_count=0 fail_count=0
     SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$SCRIPT_DIR/$(basename "$0")")
-
     for i in "${!PROJECT_ROOTS[@]}"; do
         root="${PROJECT_ROOTS[$i]}"
         type="${PROJECT_TYPES[$i]}"
         name="${PROJECT_NAMES[$i]}"
         src="${PROJECT_SOURCES[$i]:-auto}"
-
         echo ""
         echo "━━━ [$((i+1))/${count}] ${name} (${type}) — ${root} (${src}) ━━━"
-
         env_vars="PROJECT_DIR='${root}' PROJECT_TYPE='${type}' BACKUP_NAME_PREFIX='${name}'"
         env_vars="${env_vars} RCLONE_PATH='${name}-backups' RCLONE_REMOTE='${RCLONE_REMOTE}'"
         env_vars="${env_vars} BACKUP_DIR='${BACKUP_DIR}' KEEP_DAYS='${KEEP_DAYS}'"
         [ "$RCLONE_CLEANUP" = true ] && env_vars="${env_vars} RCLONE_CLEANUP=true" || env_vars="${env_vars} RCLONE_CLEANUP=false"
         [ "$DRY_RUN" = true ] && env_vars="${env_vars} DRY_RUN=true"
-
         if eval "${env_vars} bash '${SCRIPT_PATH}' 2>&1"; then
             ok_count=$((ok_count + 1))
         else
             fail_count=$((fail_count + 1))
         fi
     done
-
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║  RÉSULTATS                                                  ║"
@@ -1062,9 +953,6 @@ run_all() {
     exit $fail_count
 }
 
-# ═════════════════════════════════════════════════════════════════
-# MENU INTERACTIF (lancé sans argument, dans un vrai terminal)
-# ═════════════════════════════════════════════════════════════════
 run_menu() {
     banner "Menu — ${PROJECT_NAME}"
     echo "  Projet courant : ${C_BOLD}${PROJECT_DIR:-non détecté}${C_RESET} (${PROJECT_TYPE})"
@@ -1099,46 +987,19 @@ run_menu() {
 }
 
 # ═════════════════════════════════════════════════════════════════
-# DISPATCH DES MODES
+# DISPATCH
 # ═════════════════════════════════════════════════════════════════
 case "$ARG" in
-    --help|-h)
-        run_help
-        exit 0
-        ;;
-    --setup)
-        run_setup
-        exit 0
-        ;;
-    --cron-check)
-        run_cron_check
-        exit 0
-        ;;
-    --list)
-        run_list
-        exit 0
-        ;;
-    --verify)
-        run_verify "${2:-}"
-        exit 0
-        ;;
-    --restore)
-        run_restore "${2:-}"
-        exit 0
-        ;;
-    --dry-run)
-        DRY_RUN=true
-        ARG="--all"
-        ;;
+    --help|-h)      run_help; exit 0 ;;
+    --setup)        run_setup; exit 0 ;;
+    --cron-check)   run_cron_check; exit 0 ;;
+    --list)         run_list; exit 0 ;;
+    --verify)       run_verify "${2:-}"; exit 0 ;;
+    --restore)      run_restore "${2:-}"; exit 0 ;;
+    --dry-run)      DRY_RUN=true; ARG="--all" ;;
 esac
 
-# ─── Découverte automatique (pour --all, ou si aucun projet évident) ──
 if [ -z "${PROJECT_DIR}" ] || [ "$ARG" = "--all" ]; then
-    # allow_interactive=1 : si rien n'est trouvé du tout et qu'on est
-    # dans un vrai terminal, on peut demander le chemin à l'utilisateur.
-    # Ceci fonctionne aussi bien en cron (allow_interactive ignoré si
-    # pas de TTY) qu'en lancement manuel — c'est le bug corrigé du
-    # script original, qui abandonnait immédiatement en mode cron.
     discover_projects 1
     if [ ${#PROJECT_ROOTS[@]} -ge 1 ] && [ -z "${PROJECT_DIR}" ]; then
         PROJECT_DIR="${PROJECT_ROOTS[0]}"
@@ -1159,11 +1020,9 @@ if [ -z "${PROJECT_DIR}" ] || [ ! -d "${PROJECT_DIR}" ]; then
     exit 1
 fi
 
-# ─── Sans argument, dans un terminal : menu interactif ───────────
 if [ -z "$ARG" ] && [ "$IS_TTY" = true ]; then
     run_menu
     exit 0
 fi
 
-# ─── Sinon : run classique sur le projet courant (ex: cron) ──────
 run_single

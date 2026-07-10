@@ -7,7 +7,7 @@ set -euo pipefail
 # backup-dev.sh  —  Backup universel (DB + config serveur → rclone)
 #
 # Dev: Mr-Robot (Fsociety / Fs4)
-# ...
+# ═════════════════════════════════════════════════════════════════════
 
 # ─── 1. Couleurs & affichage ─────────────────────────────────────
 _supports_color() {
@@ -312,7 +312,6 @@ ask_project() {
     register_project "$PROJECT_DIR" "manual" "$(basename "$PROJECT_DIR" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')" "manual"
 }
 
-# Découverte, avec set +e pour ne pas planter
 discover_projects() {
     local allow_interactive="${1:-0}"
     set +e
@@ -365,8 +364,8 @@ fi
 ARG="${1:-}"
 
 # ─── 9. Fonctions utilitaires ───────────────────────────────────
-log()    { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE" 2>/dev/null || true; }
-info()   { log "${C_BLUE}ℹ️  $*${C_RESET}"; }
+log()   { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE" 2>/dev/null || true; }
+info()  { log "${C_BLUE}ℹ️  $*${C_RESET}"; }
 ok()     { log "${C_GREEN}✅ $*${C_RESET}"; }
 warn()   { log "${C_YELLOW}⚠️  $*${C_RESET}"; }
 fail()   { log "${C_RED}❌ $*${C_RESET}"; }
@@ -446,59 +445,19 @@ print_project_table() {
 mkdir -p "$BACKUP_DIR"
 
 # ═════════════════════════════════════════════════════════════════
-# MODES
+# MODES & EXÉCUTIONS
 # ═════════════════════════════════════════════════════════════════
 run_help() {
     banner "Aide"
     echo "Usage :"
-    echo "  ./backup-dev.sh               Menu interactif (TTY) ou run normal"
-    echo "  ./backup-dev.sh --all         Backup de tous les projets découverts"
-    echo "  ./backup-dev.sh --dry-run     Simulation"
-    echo "  ./backup-dev.sh --setup       Config cron + rclone (interactif)"
-    echo "  ./backup-dev.sh --cron-check  Vérifie les crons + dry-run de tous les projets"
-    echo "  ./backup-dev.sh --list        Liste les projets détectés (sans backup)"
-    echo "  ./backup-dev.sh --verify [f]  Vérifie l'intégrité d'une archive (défaut: la + récente)"
-    echo "  ./backup-dev.sh --restore <f> Extrait une archive dans un dossier d'inspection"
-    echo ""
-    echo "Découverte automatique des projets :"
-    echo "  1. Conteneurs Docker (bind mounts)"
-    echo "  2. Scan global (/var/www, /home, /data)"
-    echo "  3. Fichier YAML (/etc/devbak.yaml ou ~/.config/devbak.yaml)"
-    echo "     Format :"
-    echo "       projects:"
-    echo "         - /chemin/vers/mon/projet"
-    echo ""
-    echo "Détection par projet :"
-    echo "  Type projet    → laravel / wordpress / node / php / generic"
-    echo "  Conteneurs     → recherche par nom (configurable)"
-    echo "  Credentials DB → variables d'env du conteneur → .env local"
-    echo "  Remote rclone  → premier remote disponible"
-    echo ""
-    echo "Variables d'environnement :"
-    echo "  PROJECT_DIR         Racine du projet (sinon auto-détecté)"
-    echo "  BACKUP_NAME_PREFIX  Préfixe des archives"
-    echo "  BACKUP_DIR          Dossier de sortie des archives"
-    echo "  DB_TYPE             mysql (defaut) / pgsql / none"
-    echo "  DB_USER / DB_PASSWORD / DB_HOST / DB_PORT / DB_NAME"
-    echo "  DOCKER_MODE         auto (defaut) / true / false"
-    echo "  DOCKER_APP_NAMES    Liste des noms de conteneur app"
-    echo "  DOCKER_DB_NAMES     Liste des noms de conteneur DB"
-    echo "  CONFIG_FILES        Liste des fichiers à archiver"
-    echo "  RCLONE_REMOTE       Remote rclone (auto-détecté)"
-    echo "  RCLONE_PATH         Dossier cible sur le remote"
-    echo "  RCLONE_CLEANUP      true (defaut) supprime locale après upload"
-    echo "  KEEP_DAYS           Rétention locale (defaut 30)"
-    echo "  NO_COLOR            Désactive les couleurs"
-    echo ""
-    echo "Exemples :"
-    echo "  # Laravel + Docker"
-    echo "  ./backup-dev.sh"
-    echo ""
-    echo "  # Node.js + PostgreSQL direct"
-    echo "  DB_TYPE=pgsql DB_PORT=5432 DOCKER_MODE=false ./backup-dev.sh"
-    echo ""
-    echo "  # WordPress"
-    echo "  BACKUP_NAME_PREFIX=blog CONFIG_FILES=\"wp-config.php .htaccess\" ./backup-dev.sh"
+    echo "  ./backup-dev.sh                Menu interactif (TTY) ou run normal"
+    echo "  ./backup-dev.sh --all          Backup de tous les projets découverts"
+    echo "  ./backup-dev.sh --dry-run      Simulation"
+    echo "  ./backup-dev.sh --setup        Config cron + rclone (interactif)"
+    echo "  ./backup-dev.sh --cron-check   Vérifie les crons + dry-run de tous les projets"
+    echo "  ./backup-dev.sh --list         Liste les projets détectés (sans backup)"
+    echo "  ./backup-dev.sh --verify [f]   Vérifie l'intégrité d'une archive (défaut: la + récente)"
+    echo "  ./backup-dev.sh --restore <f>  Extrait une archive dans un dossier d'inspection"
     echo ""
 }
 
@@ -512,9 +471,9 @@ run_setup() {
     if command -v rclone &>/dev/null; then
         REMOTES=$(rclone listremotes 2>/dev/null | tr -d ':')
         [ -n "$REMOTES" ] && ok "rclone : $(echo "$REMOTES" | tr '\n' ' ')" \
-                         || warn "rclone installé mais aucun remote configuré (sudo apt install rclone && rclone config)"
+                           || warn "rclone installé mais aucun remote configuré (rclone config)"
     else
-        warn "rclone non installé (sudo apt install rclone && rclone config)"
+        warn "rclone non installé (sudo apt install rclone)"
     fi
     CURRENT_CRON=$(crontab -l 2>/dev/null || true)
     OLD_CRON_PATTERN="${OLD_CRON_PATTERN:-backup-fermeos-app}"
@@ -543,7 +502,7 @@ run_setup() {
     fi
     echo ""
     ok "Setup terminé"
-    echo "   Pour tester : $SCRIPT_PATH --dry-run"
+    echo "    Pour tester : $SCRIPT_PATH --dry-run"
     echo ""
     signature
 }
@@ -627,9 +586,7 @@ run_list() {
     discover_projects 0
     if [ ${#PROJECT_ROOTS[@]} -eq 0 ]; then
         warn "Aucun projet découvert automatiquement."
-        [ -n "${PROJECT_DIR:-}" ] && info "Projet courant (heuristique simple) : ${PROJECT_DIR} (${PROJECT_TYPE})"
-        echo ""
-        echo "  Astuce : ajoute un chemin dans /etc/devbak.yaml, ou lance --setup."
+        [ -n "${PROJECT_DIR:-}" ] && info "Projet courant : ${PROJECT_DIR} (${PROJECT_TYPE})"
         signature
         return 0
     fi
@@ -653,7 +610,6 @@ run_verify() {
         exit 1
     fi
     info "Fichier   : $target"
-    info "Taille    : $(stat -c%s "$target" 2>/dev/null || stat -f%z "$target" 2>/dev/null || echo '?') octets"
     if tar -tzf "$target" &>/dev/null; then
         ok "Archive valide (tar.gz lisible)"
         echo ""
@@ -685,7 +641,6 @@ run_restore() {
     info "Extraction vers : $dest"
     echo ""
     warn "Ceci extrait uniquement l'archive dans un dossier séparé pour inspection."
-    warn "Rien n'est réappliqué automatiquement à ta base de données ou à ton projet."
     if [ "$IS_TTY" = true ] && ! confirm "👉 Continuer l'extraction ?" "y"; then
         info "Annulé."
         signature
@@ -694,7 +649,7 @@ run_restore() {
     mkdir -p "$dest"
     tar -xzf "$target" -C "$dest"
     ok "Extraction terminée : $dest"
-    [ -f "$dest/db.sql" ] && info "Dump SQL présent : $dest/db.sql (import manuel : mysql -u user -p base < db.sql)"
+    [ -f "$dest/db.sql" ] && info "Dump SQL présent : $dest/db.sql"
     [ -f "$dest/config.tar.gz" ] && info "Config présente  : $dest/config.tar.gz"
     [ -f "$dest/system-info.txt" ] && info "Infos système    : $dest/system-info.txt"
     signature
@@ -710,12 +665,8 @@ run_single() {
     info "Rclone   : ${RCLONE_REMOTE}:${RCLONE_PATH}"
     [ "$DRY_RUN" = true ] && warn "Mode DRY-RUN : aucune action réelle"
 
-    if [ "$IS_TTY" = false ]; then
-        CURRENT_CRON=$(crontab -l 2>/dev/null || true)
-        OLD_CRON_PATTERN="${OLD_CRON_PATTERN:-backup-fermeos-app}"
-        if echo "$CURRENT_CRON" | grep -q "$OLD_CRON_PATTERN"; then
-            warn "Ancienne config détectée → lance --cron-check"
-        fi
+    if [ "$IS_TTY" = false ] && echo "$(crontab -l 2>/dev/null || true)" | grep -q "${OLD_CRON_PATTERN:-backup-fermeos-app}"; then
+         warn "Ancienne config détectée → lance --cron-check"
     fi
 
     step 1 4 "Base de données"
@@ -767,224 +718,99 @@ run_single() {
         [ -f "$PROJECT_DIR/$f" ] && FOUND_FILES="$FOUND_FILES $f"
     done
     [ -n "$FOUND_FILES" ] && TARGET_DIR="$PROJECT_DIR" && info "Fichiers trouvés dans ${PROJECT_DIR}"
+    
     if [ -z "$FOUND_FILES" ] && [ -n "$APP_CONTAINER" ]; then
-        info "Fallback : extraction depuis ${APP_CONTAINER}..."
+        info "Fallback : extraction sécurisée depuis le conteneur ${APP_CONTAINER}..."
         mkdir -p "$WORK_DIR/config-app"
-        docker cp "$APP_CONTAINER:/var/www/" "$WORK_DIR/config-app/app" 2>/dev/null || true
         for f in $CONFIG_FILES; do
-            [ -f "$WORK_DIR/config-app/app/$f" ] && FOUND_FILES="$FOUND_FILES $f"
-        done
-        [ -n "$FOUND_FILES" ] && TARGET_DIR="$WORK_DIR/config-app/app"
-    fi
-    if [ -n "$FOUND_FILES" ] && [ -n "$TARGET_DIR" ]; then
-        if [ "$DRY_RUN" = false ]; then
-            tar -czf "$WORK_DIR/config.tar.gz" -C "$TARGET_DIR" $FOUND_FILES 2>/dev/null || warn "Erreur création archive config"
-        fi
-        ok "Config :$FOUND_FILES"
-    else
-        warn "Aucun fichier de config trouvé"
-    fi
-
-    step 3 4 "Informations système"
-    if [ "$DRY_RUN" = false ]; then
-        PHP_V="php -v"
-        [ -n "$APP_CONTAINER" ] && PHP_V="docker exec $APP_CONTAINER php -v"
-        {
-            echo "=== ${PROJECT_NAME} Backup ==="
-            echo "Date: $(date)"
-            echo "Hostname: $(hostname 2>/dev/null || echo 'N/A')"
-            echo "Host: $(uname -a 2>/dev/null || echo 'N/A')"
-            echo "Projet: ${PROJECT_DIR} (${PROJECT_TYPE})"
-            echo ""
-            echo "=== PHP ==="
-            eval "$PHP_V" 2>/dev/null || echo "PHP non disponible"
-            echo ""
-            echo "=== Composer / Npm ==="
-            composer --version 2>/dev/null || echo "Composer non disponible"
-            node -v 2>/dev/null || echo "Node non disponible"
-            echo ""
-            echo "=== Docker ==="
-            docker --version 2>/dev/null || echo "Docker non disponible"
-            docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' 2>/dev/null || true
-            echo ""
-            echo "=== Système ==="
-            df -h / 2>/dev/null || true
-            free -h 2>/dev/null || true
-            uptime 2>/dev/null || true
-        } > "$WORK_DIR/system-info.txt"
-    fi
-    ok "system-info.txt créé"
-
-    step 4 4 "Assemblage & upload"
-    if [ "$DRY_RUN" = false ]; then
-        tar -czf "$BACKUP_DIR/${BASENAME}.tar.gz" -C "$WORK_DIR" . 2>/dev/null
-    fi
-    if [ -f "$BACKUP_DIR/${BASENAME}.tar.gz" ]; then
-        S=$(stat -c%s "$BACKUP_DIR/${BASENAME}.tar.gz" 2>/dev/null || stat -f%z "$BACKUP_DIR/${BASENAME}.tar.gz" 2>/dev/null || echo "?")
-        ok "Archive : ${BASENAME}.tar.gz (${S} octets)"
-    else
-        [ "$DRY_RUN" = false ] && warn "Archive non créée"
-    fi
-
-    title "Upload"
-    if command -v rclone &>/dev/null && [ -f "$BACKUP_DIR/${BASENAME}.tar.gz" ]; then
-        info "rclone ${RCLONE_REMOTE}:${RCLONE_PATH}/"
-        if [ "$DRY_RUN" = false ]; then
-            if rclone copy "$BACKUP_DIR/${BASENAME}.tar.gz" "${RCLONE_REMOTE}:${RCLONE_PATH}/" 2>>"$LOG_FILE"; then
-                ok "Upload réussi"
-                [ "$RCLONE_CLEANUP" = true ] && rm -f "$BACKUP_DIR/${BASENAME}.tar.gz" && info "Archive locale supprimée"
-            else
-                fail "Échec upload rclone (voir $LOG_FILE)"
+            if docker exec "$APP_CONTAINER" [ -f "$f" ] 2>/dev/null; then
+                docker cp "$APP_CONTAINER:$f" "$WORK_DIR/config-app/$f" 2>/dev/null && FOUND_FILES="$FOUND_FILES $f"
             fi
-        fi
-    elif ! command -v rclone &>/dev/null; then
-        warn "rclone non installé"
-        info "Archive locale : $BACKUP_DIR/${BASENAME}.tar.gz"
+        done
+        [ -n "$FOUND_FILES" ] && TARGET_DIR="$WORK_DIR/config-app"
+    fi
+
+    if [ -n "$FOUND_FILES" ] && [ "$DRY_RUN" = false ]; then
+        tar -czf "$WORK_DIR/config.tar.gz" -C "$TARGET_DIR" $FOUND_FILES 2>/dev/null || true
+        ok "Configuration archivée : $(echo $FOUND_FILES | wc -w) fichier(s)"
     else
-        [ "$DRY_RUN" = false ] && warn "Archive introuvable"
+        warn "Aucun fichier de configuration trouvé ou mode dry-run"
     fi
 
-    title "Rotation"
-    if [ "$KEEP_DAYS" -gt 0 ]; then
-        info "Nettoyage des backups > ${KEEP_DAYS} jours..."
+    step 3 4 "Archive finale"
+    if [ "$DRY_RUN" = false ]; then
+        {
+            echo "Backup Name: $PROJECT_NAME"
+            echo "Timestamp  : $TIMESTAMP"
+            echo "Type       : $PROJECT_TYPE"
+            echo "Host       : $(hostname)"
+            echo "Docker App : ${APP_CONTAINER:-none}"
+            echo "Docker DB  : ${MYSQL_CONTAINER:-none}"
+        } > "$WORK_DIR/system-info.txt"
+
+        tar -czf "$BACKUP_DIR/${BASENAME}.tar.gz" -C "$WORK_DIR" .
+        ok "Archive créée : $BACKUP_DIR/${BASENAME}.tar.gz ($(du -sh "$BACKUP_DIR/${BASENAME}.tar.gz" 2>/dev/null | awk '{print $1}' || echo 'OK'))"
+    else
+        info "Archive virtuelle créée (dry-run)"
+    fi
+
+    step 4 4 "Upload cloud & Rétention"
+    if command -v rclone &>/dev/null && [ -n "$RCLONE_REMOTE" ]; then
         if [ "$DRY_RUN" = false ]; then
-            find "$BACKUP_DIR" -maxdepth 1 -name "${PROJECT_NAME}-backup-dev-*.tar.gz" -mtime "+${KEEP_DAYS}" -delete 2>/dev/null
-        fi
-    fi
-    find "$BACKUP_DIR" -maxdepth 1 -name 'backup-dev.log.*' -mtime +90 -delete 2>/dev/null || true
-
-    echo ""
-    ok "Backup terminé — ${PROJECT_NAME}"
-    signature
-}
-
-run_all() {
-    local count=${#PROJECT_ROOTS[@]}
-    if [ "$count" -eq 0 ]; then
-        fail "Aucun projet trouvé"
-        echo ""
-        echo "  Astuces :"
-        echo "  - Vérifie que tes conteneurs Docker sont en cours d'exécution"
-        echo "  - Crée un fichier /etc/devbak.yaml avec :"
-        echo "      projects:"
-        echo "        - /chemin/vers/mon/projet"
-        echo ""
-        exit 1
-    fi
-    banner "Backup multi-projets (${count})"
-    print_project_table
-    echo ""
-    local SCRIPT_PATH ok_count=0 fail_count=0
-    SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$SCRIPT_DIR/$(basename "$0")")
-    for i in "${!PROJECT_ROOTS[@]}"; do
-        root="${PROJECT_ROOTS[$i]}"
-        type="${PROJECT_TYPES[$i]}"
-        name="${PROJECT_NAMES[$i]}"
-        src="${PROJECT_SOURCES[$i]:-auto}"
-        echo ""
-        echo "━━━ [$((i+1))/${count}] ${name} (${type}) — ${root} (${src}) ━━━"
-
-        env_vars="PROJECT_DIR='${root}' PROJECT_TYPE='${type}' BACKUP_NAME_PREFIX='${name}'"
-        env_vars="${env_vars} RCLONE_PATH='${name}-backups' RCLONE_REMOTE='${RCLONE_REMOTE}'"
-        env_vars="${env_vars} BACKUP_DIR='${BACKUP_DIR}' KEEP_DAYS='${KEEP_DAYS}'"
-        [ "$RCLONE_CLEANUP" = true ] && env_vars="${env_vars} RCLONE_CLEANUP=true" || env_vars="${env_vars} RCLONE_CLEANUP=false"
-        [ "$DRY_RUN" = true ] && env_vars="${env_vars} DRY_RUN=true"
-        # Force le mode non interactif pour le sous-shell
-        env_vars="${env_vars} NON_INTERACTIVE=true"
-
-        if eval "${env_vars} bash '${SCRIPT_PATH}' 2>&1"; then
-            ok_count=$((ok_count + 1))
+            info "Synchronisation vers rclone (${RCLONE_REMOTE}:${RCLONE_PATH})..."
+            if rclone copy "$BACKUP_DIR/${BASENAME}.tar.gz" "${RCLONE_REMOTE}:${RCLONE_PATH}" 2>/dev/null; then
+                ok "Upload cloud réussi"
+                [ "$RCLONE_CLEANUP" = "true" ] && rm -f "$BACKUP_DIR/${BASENAME}.tar.gz" && info "Archive locale nettoyée après envoi"
+            else
+                warn "Échec de l'upload via rclone"
+            fi
         else
-            fail_count=$((fail_count + 1))
+            info "Upload cloud simulé (dry-run)"
         fi
-    done
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║  RÉSULTATS                                                  ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    [ "$ok_count" -gt 0 ]    && echo "  ${C_GREEN}✔ ${ok_count} succès${C_RESET}"
-    [ "$fail_count" -gt 0 ]  && echo "  ${C_RED}✘ ${fail_count} échecs${C_RESET}"
-    [ "$fail_count" -eq 0 ]  && echo "  ${C_GREEN}✅ Tout OK${C_RESET}"
-    signature
-    exit $fail_count
-}
-
-run_menu() {
-    banner "Menu — ${PROJECT_NAME}"
-    echo "  Projet courant : ${C_BOLD}${PROJECT_DIR:-non détecté}${C_RESET} (${PROJECT_TYPE})"
-    echo ""
-    echo "  1) Backup de ce projet"
-    echo "  2) Backup de tous les projets détectés (--all)"
-    echo "  3) Simulation (--dry-run)"
-    echo "  4) Lister les projets détectés"
-    echo "  5) Vérifier une archive existante"
-    echo "  6) Restaurer / extraire une archive"
-    echo "  7) Configurer le cron (--setup)"
-    echo "  8) Vérifier la config cron (--cron-check)"
-    echo "  9) Aide"
-    echo "  0) Quitter"
-    echo ""
-    printf "  Choix : "
-    read -r choice </dev/tty
-    echo ""
-    case "$choice" in
-        1) run_single ;;
-        2) discover_projects 0; run_all ;;
-        3) DRY_RUN=true; run_single ;;
-        4) run_list ;;
-        5) printf "  Chemin de l'archive (vide = la plus récente) : "; read -r f </dev/tty; run_verify "$f" ;;
-        6) printf "  Chemin de l'archive à restaurer : "; read -r f </dev/tty; run_restore "$f" ;;
-        7) run_setup ;;
-        8) run_cron_check ;;
-        9) run_help ;;
-        0|"") info "À bientôt !" ;;
-        *) warn "Choix invalide." ;;
-    esac
-}
-
-# ═════════════════════════════════════════════════════════════════
-# DISPATCH
-# ═════════════════════════════════════════════════════════════════
-case "$ARG" in
-    --help|-h)      run_help; exit 0 ;;
-    --setup)        run_setup; exit 0 ;;
-    --cron-check)   run_cron_check; exit 0 ;;
-    --list)         run_list; exit 0 ;;
-    --verify)       run_verify "${2:-}"; exit 0 ;;
-    --restore)      run_restore "${2:-}"; exit 0 ;;
-    --dry-run)      DRY_RUN=true; ARG="--all" ;;
-esac
-
-# Si on est en mode non-interactif forcé (venant de run_all ou cron-check), exécuter directement
-if [ "${NON_INTERACTIVE:-false}" = true ]; then
-    run_single
-    exit $?
-fi
-
-if [ -z "${PROJECT_DIR}" ] || [ "$ARG" = "--all" ]; then
-    discover_projects 1
-    if [ ${#PROJECT_ROOTS[@]} -ge 1 ] && [ -z "${PROJECT_DIR}" ]; then
-        PROJECT_DIR="${PROJECT_ROOTS[0]}"
-        PROJECT_TYPE="${PROJECT_TYPES[0]}"
-        PROJECT_NAME="${BACKUP_NAME_PREFIX:-${PROJECT_NAMES[0]}}"
-        [ ${#PROJECT_ROOTS[@]} -gt 1 ] && info "Plusieurs projets détectés → utilisation du 1er (${PROJECT_DIR}). Utilise --all pour tous les backuper, ou --list pour les voir."
+    else
+        warn "rclone non configuré ou introuvable, upload sauté"
     fi
-fi
 
-if [ "$ARG" = "--all" ]; then
-    run_all
-    exit $?
-fi
+    if [ "$DRY_RUN" = false ] && [ -d "$BACKUP_DIR" ]; then
+        find "$BACKUP_DIR" -maxdepth 1 -name "${PROJECT_NAME}-backup-dev-*.tar.gz" -mtime +"$KEEP_DAYS" -exec rm -f {} \; 2>/dev/null || true
+    fi
+    
+    ok "Opération terminée avec succès"
+    signature
+}
 
-if [ -z "${PROJECT_DIR}" ] || [ ! -d "${PROJECT_DIR}" ]; then
-    fail "Aucun projet défini."
-    echo "   Lance './$(basename "$0") --setup' ou './$(basename "$0") --list' pour diagnostiquer."
-    exit 1
-fi
-
-if [ -z "$ARG" ] && [ "$IS_TTY" = true ]; then
-    run_menu
-    exit 0
-fi
-
-run_single
+# ─── 10. Point d'entrée principal ────────────────────────────────
+case "$ARG" in
+    --help|-h)       run_help ;;
+    --setup)         run_setup ;;
+    --cron-check)    run_cron_check ;;
+    --list)          run_list ;;
+    --verify)        run_verify "${2:-}" ;;
+    --restore)       run_restore "${2:-}" ;;
+    --dry-run)
+        DRY_RUN=true
+        discover_projects 1
+        run_single
+        ;;
+    --all)
+        discover_projects 0
+        if [ ${#PROJECT_ROOTS[@]} -eq 0 ]; then
+            fail "Aucun projet détecté pour le mode --all"
+            exit 1
+        fi
+        SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$SCRIPT_DIR/$(basename "$0")")
+        for i in "${!PROJECT_ROOTS[@]}"; do
+            PROJECT_DIR="${PROJECT_ROOTS[$i]}" \
+            PROJECT_TYPE="${PROJECT_TYPES[$i]}" \
+            PROJECT_NAME="${PROJECT_NAMES[$i]}" \
+            RCLONE_PATH="${PROJECT_NAMES[$i]}-backups" \
+            bash "$SCRIPT_PATH" ""
+        done
+        ;;
+    *)
+        if [ -z "${PROJECT_DIR:-}" ]; then
+            discover_projects 1
+        fi
+        run_single
+        ;;
+esac

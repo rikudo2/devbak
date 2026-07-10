@@ -234,9 +234,9 @@ declare -a PROJECT_ROOTS=() PROJECT_TYPES=() PROJECT_NAMES=() PROJECT_SOURCES=()
 register_project() {
     local root="$1" type="$2" name="$3" source="${4:-auto}"
     # Ignorer les répertoires système
-    case "$root" in /usr/local/*|/bin/*|/usr/bin/*|/etc/*|/sys/*|/proc/*|/dev/*) return 1 ;; esac
+    case "$root" in /usr/local/*|/bin/*|/usr/bin/*|/etc/*|/sys/*|/proc/*|/dev/*) return 0 ;; esac
     # Ignorer les doublons
-    for existing in "${PROJECT_ROOTS[@]}"; do [ "$existing" = "$root" ] && return 1; done
+    for existing in "${PROJECT_ROOTS[@]}"; do [ "$existing" = "$root" ] && return 0; done
     PROJECT_ROOTS+=("$root"); PROJECT_TYPES+=("$type"); PROJECT_NAMES+=("$name"); PROJECT_SOURCES+=("$source")
 }
 

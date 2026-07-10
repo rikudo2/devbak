@@ -707,11 +707,11 @@ fi
 # ═════════════════════════════════════════════════════════════════
 [ "$ARG" = "--dry-run" ] && { DRY_RUN=true; ARG="--all"; }
 
-# ─── Découverte automatique si PROJECT_DIR non défini ────────────
-if [ -z "${PROJECT_DIR}" ]; then
+# ─── Découverte automatique ──────────────────────────────────────
+if [ -z "${PROJECT_DIR}" ] || [ "$ARG" = "--all" ]; then
     discover_projects
     # Si un seul projet découvert, on l'utilise
-    if [ ${#PROJECT_ROOTS[@]} -eq 1 ]; then
+    if [ ${#PROJECT_ROOTS[@]} -eq 1 ] && [ -z "${PROJECT_DIR}" ]; then
         PROJECT_DIR="${PROJECT_ROOTS[0]}"
         PROJECT_TYPE="${PROJECT_TYPES[0]}"
     fi

@@ -208,8 +208,9 @@ register_project() {
 
 scan_docker_projects() {
     command -v docker &>/dev/null || return 0
-    local cid mounts
-    for cid in $(docker ps -q 2>/dev/null); do
+    local cid mounts containers
+    containers=$(docker ps -q 2>/dev/null) || true
+    for cid in $containers; do
         mounts=$(docker inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "$cid" 2>/dev/null || true)
         [ -z "$mounts" ] && continue
         while IFS= read -r mount; do

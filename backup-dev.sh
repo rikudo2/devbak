@@ -6,6 +6,8 @@ set -euo pipefail
 # ═════════════════════════════════════════════════════════════════════
 # backup-dev.sh  —  Backup universel (DB + config serveur → rclone)
 #
+# Dev: Mr-Robot (Fsociety / Fs4)
+#
 # Universel : fonctionne sur n'importe quel projet (Laravel, Node,
 # Symfony, WordPress...) et n'importe quel serveur (Docker ou non).
 #
